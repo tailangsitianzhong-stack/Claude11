@@ -2,7 +2,7 @@ import { GameLoop } from './GameLoop';
 import { RenderPipeline } from '../render/RenderPipeline';
 import { ViewportManager } from '../platform/ViewportManager';
 import { QualityManager } from '../platform/QualityManager';
-import { CHANGE_WARMUP_SEC, StatsOverlay } from '../debug/StatsOverlay';
+import { CHANGE_WARMUP, StatsOverlay } from '../debug/StatsOverlay';
 import { DevCamera } from '../debug/DevCamera';
 import { ShaderErrorMonitor } from '../render/shaderErrors';
 import { StageManager } from '../stage/StageManager';
@@ -68,7 +68,7 @@ export class Game {
     this.viewport.subscribe((size) => {
       this.devCamera.setAspect(size.width / size.height);
       this.pipeline.setViewport(size);
-      if (!initialViewport) this.stats.meter.beginWarmup('画面サイズ変更', CHANGE_WARMUP_SEC);
+      if (!initialViewport) this.stats.meter.beginWarmup('画面サイズ変更', CHANGE_WARMUP);
       initialViewport = false;
     });
 
@@ -77,7 +77,7 @@ export class Game {
       this.pipeline.applyQuality(state.settings);
       this.stages.applyQuality(state.settings);
       this.loop.setMaxFps(state.frameRateMode === 30 ? 30 : null);
-      if (!initialQuality) this.stats.meter.beginWarmup('画質変更', CHANGE_WARMUP_SEC);
+      if (!initialQuality) this.stats.meter.beginWarmup('画質変更', CHANGE_WARMUP);
       initialQuality = false;
     });
 
@@ -87,7 +87,7 @@ export class Game {
         this.loop.stop();
       } else {
         this.loop.start();
-        this.stats.meter.beginWarmup('タブ復帰', CHANGE_WARMUP_SEC);
+        this.stats.meter.beginWarmup('タブ復帰', CHANGE_WARMUP);
       }
     });
   }
