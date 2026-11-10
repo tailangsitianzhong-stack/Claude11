@@ -55,10 +55,15 @@ export interface RenderStats {
 }
 
 export type FatalListener = (message: string) => void;
+export type ContextRestoredListener = () => void;
+export type ContextLostListener = () => void;
 
 /** Bloom のしきい値（輝度）。applyBufferConfig のコメントを参照 */
 export const BLOOM_THRESHOLD_HDR = 1.0;
 export const BLOOM_THRESHOLD_8BIT = 0.8;
+
+/** 描画後の GL エラーを、バッファの組み合わせの失敗とみなすまでの連続フレーム数 */
+export const POST_FAILURE_CONFIRM_FRAMES = 2;
 
 const GL_ERROR_NAMES: Record<number, string> = {
   0x0500: 'INVALID_ENUM',
@@ -87,6 +92,8 @@ export class RenderPipeline {
   private readonly outputPass: OutputPass;
   private readonly fallback: RenderTargetFallback;
   private readonly fatalListeners = new Set<FatalListener>();
+  private readonly restoredListeners = new Set<ContextRestoredListener>();
+  private readonly lostListeners = new Set<ContextLostListener>();
 
   private viewport: ViewportSize = { width: 1, height: 1, devicePixelRatio: 1 };
   private pixelRatioCap = 2;
@@ -97,6 +104,8 @@ export class RenderPipeline {
   private fatalMessage: string | null = null;
   private contextLost = false;
   private probeUnavailableWarned = false;
+  /** 描画後の検査で GL エラーが続いたフレーム数 */
+  private postFailureStreak = 0;
 
   constructor(container: HTMLElement) {
     this.renderer = new WebGLRenderer({
@@ -136,8 +145,8 @@ export class RenderPipeline {
 
     this.configureBuffers();
 
-    this.canvas.addEventListener('webglcontextlost', this.onContextLost);
-    this.canvas.addEventListener('webglcontextrestored', this.onContextRestored);
+    this.canvas.addEventListener('webglcontextlost', this.handleContextLost);
+    this.canvas.addEventListener('webglcontextrestored', this.handleContextRestored);
   }
 
   setView(scene: Scene, camera: Camera): void {
@@ -164,6 +173,32 @@ export class RenderPipeline {
   onFatal(listener: FatalListener): void {
     this.fatalListeners.add(listener);
     if (this.fatalMessage) listener(this.fatalMessage);
+  }
+
+  /**
+   * WebGL コンテキストの喪失を知らせる（A2 で追加）。
+   * シーンに含まれない GPU 資源や、テクスチャから RenderTarget をたどれない資源（PMREM の環境マップ = WebGLCubeRenderTarget など）は、
+   * 所有者がこの時点（GL の呼び出しが何もしない状態）で解放する。復帰後に解放すると、古いコンテキストの GL オブジェクトを削除しようとして警告が出る。
+   * 同じ関数を何度登録しても1回として扱う（Set）。戻り値の関数で登録を解除する。
+   */
+  onContextLost(listener: ContextLostListener): () => void {
+    this.lostListeners.add(listener);
+    return () => {
+      this.lostListeners.delete(listener);
+    };
+  }
+
+  /**
+   * WebGL コンテキストの復帰を知らせる（A2 で追加）。
+   * GPU 上で描いて作る資源（PMREM の環境マップなど）は再アップロードで復元できないため、所有者が作り直す。
+   * 同じ関数を何度登録しても1回として扱う（Set）。戻り値の関数で登録を解除する。
+   * 呼び出し時点で three.js の管理情報は作り直し済みで、描画バッファは次の描画で再検証される。
+   */
+  onContextRestored(listener: ContextRestoredListener): () => void {
+    this.restoredListeners.add(listener);
+    return () => {
+      this.restoredListeners.delete(listener);
+    };
   }
 
   render(): void {
@@ -235,6 +270,7 @@ export class RenderPipeline {
     this.active = next;
     this.applyBufferConfig(next);
     this.needsValidation = true;
+    this.postFailureStreak = 0;
   }
 
   private applyBufferConfig(c: BufferConfig): void {
@@ -284,7 +320,11 @@ export class RenderPipeline {
     return !this.fatalMessage && this.active !== null;
   }
 
-  /** 描画後の検証。GL エラーがあれば次の組み合わせへ落とす（次のフレームで再試行） */
+  /**
+   * 描画後の検証。GL エラーが **2回連続** で出たら、その組み合わせを失敗とみなして次へ落とす。
+   * 1回だけのエラーは、バッファ以外の原因（シェーダーのコンパイル失敗で代わりのマテリアルへ切り替わる前のフレームなど）の
+   * 可能性があるため、次のフレームでもう一度確かめる。バッファの組み合わせが原因なら、エラーは毎フレーム続く。
+   */
   private postvalidate(): void {
     const gl = this.renderer.getContext();
     const errors: string[] = [];
@@ -295,9 +335,17 @@ export class RenderPipeline {
     }
     if (errors.length === 0) {
       this.needsValidation = false;
+      this.postFailureStreak = 0;
       return;
     }
-    this.reportFailure([...new Set(errors)].join(', '));
+    this.postFailureStreak++;
+    const reason = [...new Set(errors)].join(', ');
+    if (this.postFailureStreak < POST_FAILURE_CONFIRM_FRAMES) {
+      console.info(`[RenderPipeline] 描画後に ${reason} を検出しました。次のフレームで再確認します。`);
+      return; // needsValidation は true のまま
+    }
+    this.postFailureStreak = 0;
+    this.reportFailure(`${reason}（${POST_FAILURE_CONFIRM_FRAMES}フレーム連続）`);
   }
 
   private reportFailure(reason: string): void {
@@ -329,7 +377,7 @@ export class RenderPipeline {
   // WebGL コンテキストの喪失と復帰
   // ---------------------------------------------------------------------------
 
-  private readonly onContextLost = (e: Event): void => {
+  private readonly handleContextLost = (e: Event): void => {
     // preventDefault しないと復帰イベントが来ない（three.js 側でも呼ばれる）
     e.preventDefault();
     this.contextLost = true;
@@ -339,13 +387,28 @@ export class RenderPipeline {
     this.composer.dispose(); // renderTarget1/2 とコピー用パス
     for (const pass of this.composer.passes) pass.dispose(); // Bloom の作業バッファ・各パスのマテリアル
     releaseSceneGpuResources(this.renderPass.scene); // ジオメトリ・マテリアル・テクスチャ・影マップ
+    for (const l of [...this.lostListeners]) {
+      try {
+        l();
+      } catch (error) {
+        console.error('[RenderPipeline] コンテキスト喪失時の処理でエラーが発生しました', error);
+      }
+    }
   };
 
-  private readonly onContextRestored = (): void => {
+  private readonly handleContextRestored = (): void => {
     this.contextLost = false;
     // 新しいコンテキストで同じ組み合わせが使えるとは限らないため、次の描画で再検証する
     this.needsValidation = true;
     console.info('[RenderPipeline] WebGLコンテキストが復帰しました。次の描画で資源を作り直します。');
+    for (const l of [...this.restoredListeners]) {
+      try {
+        l();
+      } catch (error) {
+        // 1つの処理の失敗で他の資源の作り直しを止めない（エラーは隠さず出力する）
+        console.error('[RenderPipeline] コンテキスト復帰後の処理でエラーが発生しました', error);
+      }
+    }
   };
 
   private applySize(): void {

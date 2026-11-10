@@ -104,16 +104,17 @@ export class StatsOverlay {
     this.el.style.display = v ? '' : 'none';
   }
 
-  frame(frameDt: number, stats: RenderStats, quality: QualityState): void {
+  /** notes：ステージなど描画パイプライン以外からの注意書き（代わりの床・環境マップなし など） */
+  frame(frameDt: number, stats: RenderStats, quality: QualityState, notes: readonly string[] = []): void {
     const updated = this.meter.push(frameDt);
     this.sinceDraw += Math.max(frameDt, 0);
     // 集計が更新されたとき、またはウォームアップ中は 0.25 秒ごとに表示を更新する
     if (!updated && this.sinceDraw < 0.25) return;
     this.sinceDraw = 0;
-    this.el.textContent = this.compose(stats, quality);
+    this.el.textContent = this.compose(stats, quality, notes);
   }
 
-  private compose(stats: RenderStats, quality: QualityState): string {
+  private compose(stats: RenderStats, quality: QualityState, notes: readonly string[]): string {
     const m = this.meter;
     const preset = presetForLevel(quality.level);
     const q = quality.settings;
@@ -150,6 +151,7 @@ export class StatsOverlay {
     if (stats.fallbackNote) lines.push(`バッファ: ${stats.fallbackNote}`);
     if (stats.bufferStatus === 'validating') lines.push('バッファ検証中…');
     if (stats.contextLost) lines.push('WebGLコンテキスト喪失中（復帰待ち）');
+    for (const n of notes) lines.push(n);
     return lines.join('\n');
   }
 }

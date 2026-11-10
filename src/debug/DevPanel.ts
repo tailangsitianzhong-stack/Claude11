@@ -1,5 +1,7 @@
 import type GUI from 'lil-gui';
 import type { QualityManager } from '../platform/QualityManager';
+import type { SunAngles } from '../stage/stages/colosseum/lighting';
+import { VIEW_PRESET_LABELS, VIEW_PRESETS, type ViewPreset } from './DevCamera';
 import {
   MAX_QUALITY_LEVEL,
   PRESET_LABELS,
@@ -13,10 +15,20 @@ import {
  * 開発用の設定パネル（lil-gui）。
  * 開発サーバー、または URL に ?debug=1 を付けたときだけ読み込む（通常のビルドには含めない）。
  */
-export async function createDevPanel(
-  quality: QualityManager,
-  options: { onToggleStats: (visible: boolean) => void },
-): Promise<GUI> {
+export interface DevPanelOptions {
+  onToggleStats: (visible: boolean) => void;
+  /** 確認用カメラ（A2） */
+  camera?: { apply(preset: ViewPreset): void };
+  /** ステージの確認・調整（A2） */
+  stage?: {
+    getSun(): SunAngles;
+    setSun(angles: SunAngles): void;
+    setScaleReferenceVisible(visible: boolean): void;
+    floorMode(): string;
+  };
+}
+
+export async function createDevPanel(quality: QualityManager, options: DevPanelOptions): Promise<GUI> {
   const { default: GUIClass } = await import('lil-gui');
   const gui = new GUIClass({ title: '開発パネル' });
 
@@ -56,6 +68,33 @@ export async function createDevPanel(
     .add(model, 'stats')
     .name('統計表示')
     .onChange((v: boolean) => options.onToggleStats(v));
+
+  if (options.camera) {
+    const cam = options.camera;
+    const camFolder = gui.addFolder('確認用カメラ（開発用）');
+    const actions = Object.fromEntries(VIEW_PRESETS.map((p) => [p, () => cam.apply(p)])) as Record<ViewPreset, () => void>;
+    for (const p of VIEW_PRESETS) camFolder.add(actions, p).name(VIEW_PRESET_LABELS[p]);
+  }
+
+  if (options.stage) {
+    const st = options.stage;
+    const stageFolder = gui.addFolder('ステージ');
+    const sun = { ...st.getSun() };
+    stageFolder
+      .add(sun, 'elevationDeg', 10, 80, 1)
+      .name('太陽の仰角（°）')
+      .onChange(() => st.setSun({ ...sun }));
+    stageFolder
+      .add(sun, 'azimuthDeg', 0, 360, 1)
+      .name('太陽の方位（°）')
+      .onChange(() => st.setSun({ ...sun }));
+    const vis = { scale: true, floor: st.floorMode() };
+    stageFolder
+      .add(vis, 'scale')
+      .name('大きさの目安（1.8m）')
+      .onChange((v: boolean) => st.setScaleReferenceVisible(v));
+    stageFolder.add(vis, 'floor').name('床の描画方式').disable();
+  }
 
   quality.subscribe((state) => {
     model.level = state.level;
