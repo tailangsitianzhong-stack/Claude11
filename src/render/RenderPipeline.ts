@@ -19,6 +19,7 @@ import type { QualityLevelSettings } from '../platform/QualitySettings';
 import type { ViewportSize } from '../platform/ViewportManager';
 import { releaseSceneGpuResources } from './gpuResources';
 import { RenderTargetFallback, describeConfig, type BufferConfig } from './renderTargetFallback';
+import { probeRenderTargets } from './internal/threeRenderTargetProbe';
 
 /**
  * 描画の経路を一本化したパイプライン。
@@ -55,20 +56,16 @@ export interface RenderStats {
 
 export type FatalListener = (message: string) => void;
 
+/** Bloom のしきい値（輝度）。applyBufferConfig のコメントを参照 */
+export const BLOOM_THRESHOLD_HDR = 1.0;
+export const BLOOM_THRESHOLD_8BIT = 0.8;
+
 const GL_ERROR_NAMES: Record<number, string> = {
   0x0500: 'INVALID_ENUM',
   0x0501: 'INVALID_VALUE',
   0x0502: 'INVALID_OPERATION',
   0x0505: 'OUT_OF_MEMORY',
   0x0506: 'INVALID_FRAMEBUFFER_OPERATION',
-};
-
-const FRAMEBUFFER_STATUS_NAMES: Record<number, string> = {
-  0x8cd6: 'INCOMPLETE_ATTACHMENT',
-  0x8cd7: 'INCOMPLETE_MISSING_ATTACHMENT',
-  0x8cd9: 'INCOMPLETE_DIMENSIONS',
-  0x8cdd: 'UNSUPPORTED',
-  0x8d56: 'INCOMPLETE_MULTISAMPLE',
 };
 
 function hex(n: number): string {
@@ -99,6 +96,7 @@ export class RenderPipeline {
   private needsValidation = true;
   private fatalMessage: string | null = null;
   private contextLost = false;
+  private probeUnavailableWarned = false;
 
   constructor(container: HTMLElement) {
     this.renderer = new WebGLRenderer({
@@ -251,8 +249,11 @@ export class RenderPipeline {
       rt.texture.type = type;
       rt.dispose();
     }
-    // 8bit ではしきい値 1.0 を超える値が存在しないため、少し下げる
-    this.bloomPass.threshold = c.hdr ? 1.0 : 0.95;
+    // Bloom のしきい値（輝度）。
+    // HDR：明るさ 1.0 を超える発光部分だけが光る。
+    // 8bit：各色が 1.0 で切り詰められるため、強い発光でも輝度は 1.0 未満になりうる
+    //       （例：発光色 #ffb347 ×4 → (1, 1, 0.24) → 輝度 約0.945）。発光体が光るよう 0.8 に下げる。
+    this.bloomPass.threshold = c.hdr ? BLOOM_THRESHOLD_HDR : BLOOM_THRESHOLD_8BIT;
   }
 
   private bloomTargets(): WebGLRenderTarget[] {
@@ -263,15 +264,22 @@ export class RenderPipeline {
   /**
    * 描画前の検証。現在の組み合わせのバッファを確保してフレームバッファの完全性を調べ、
    * 失敗したら次の組み合わせへ落として再試行する。描画してよければ true。
+   * 検査は internal/threeRenderTargetProbe.ts に隔離（three.js の DRAW 側の状態とキャッシュは変更しない）。
    */
   private prevalidate(): boolean {
     for (let attempt = 0; attempt < 4; attempt++) {
       if (this.fatalMessage || !this.active) return false;
-      const targets = this.validationTargets();
-      for (const rt of targets) this.renderer.initRenderTarget(rt);
-      const problems = this.checkFramebuffers(targets);
-      if (problems.length === 0) return true;
-      this.reportFailure(problems.join(', '));
+      const result = probeRenderTargets(this.renderer, this.validationTargets());
+      if (result.kind === 'ok') return true;
+      if (result.kind === 'unavailable') {
+        // three.js の内部構造が想定と異なる：事前検査は諦め、描画後の GL エラー検査（postvalidate）だけで判定する
+        if (!this.probeUnavailableWarned) {
+          this.probeUnavailableWarned = true;
+          console.warn(`[RenderPipeline] 描画前のバッファ検査を省略します（${result.reason}）。描画後の検査で判定します。`);
+        }
+        return true;
+      }
+      this.reportFailure(result.problems.join(', '));
     }
     return !this.fatalMessage && this.active !== null;
   }
@@ -307,33 +315,6 @@ export class RenderPipeline {
     const targets = [this.composer.renderTarget1, this.composer.renderTarget2];
     if (this.bloomPass.enabled) targets.push(...this.bloomTargets());
     return targets;
-  }
-
-  /** フレームバッファの完全性を調べる（MSAA 用と解決先の両方）。問題の一覧を返す */
-  private checkFramebuffers(targets: WebGLRenderTarget[]): string[] {
-    const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    const problems: string[] = [];
-    const previous = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
-    for (const rt of targets) {
-      const props = this.renderer.properties.get(rt) as {
-        __webglFramebuffer?: WebGLFramebuffer;
-        __webglMultisampledFramebuffer?: WebGLFramebuffer;
-      };
-      for (const [label, fb] of [
-        ['MSAA', props.__webglMultisampledFramebuffer],
-        ['解決先', props.__webglFramebuffer],
-      ] as const) {
-        if (!fb) continue;
-        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-        if (status !== gl.FRAMEBUFFER_COMPLETE) {
-          problems.push(`${rt.texture.name || 'RenderTarget'}(${label}) ${FRAMEBUFFER_STATUS_NAMES[status] ?? hex(status)}`);
-        }
-      }
-    }
-    // three.js の内部キャッシュと実際の束縛状態を一致させるため、元に戻す
-    gl.bindFramebuffer(gl.FRAMEBUFFER, previous);
-    return problems;
   }
 
   private fail(message: string): void {

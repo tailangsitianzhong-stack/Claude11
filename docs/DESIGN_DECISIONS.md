@@ -139,5 +139,34 @@ A1 では、初期画質を固定値 **段階3（中）・60fps** とする（`D
   ① 各 RenderTarget のフレームバッファの完全性（`checkFramebufferStatus`、MSAA 用と解決先の両方）、
   ② GL エラー（`getError`。検証するフレームだけ確認する）を調べる。
 - 一度失敗した組み合わせは記録し、画質を切り替えても再び試さない。
-- Bloom の作業バッファも同じ種類（HDR / 8bit）に合わせる。8bit では Bloom のしきい値を 1.0 から 0.95 に下げる。
+- Bloom の作業バッファも同じ種類（HDR / 8bit）に合わせる。8bit では Bloom のしきい値を 1.0 から 0.8 に下げる
+  （8bit では各色が 1.0 で切り詰められ、強い発光でも輝度が 1.0 未満になるため。例：#ffb347 ×4 → 輝度 約0.945）。
 - 統計表示には「実際に使っている MSAA（要求された値）」「HDR / 8bit」「失敗した組み合わせ」を表示する。
+
+### 4-5. three.js の内部実装への依存（A1 最終監査で整理）
+
+フレームバッファの完全性の事前検査だけが three.js の内部実装に依存する。依存は `src/render/internal/threeRenderTargetProbe.ts` の1ファイルに隔離した。
+
+| 依存先 | 内容 | 確認したバージョン |
+|---|---|---|
+| `renderer.properties`（公開プロパティだが中身は内部の管理情報） | `properties.has / get(renderTarget)` | three.js 0.187.0（REVISION '187'） |
+| `__webglFramebuffer` | 解決先（MSAAなしの場合は描画先）のフレームバッファ | 同上（`WebGLTextures.js` の `setupRenderTarget`） |
+| `__webglMultisampledFramebuffer` | MSAA 用のフレームバッファ（samples > 0） | 同上 |
+
+- **内部 API を使う理由**：公開 API の `renderer.setRenderTarget()` でバインドされるのは MSAA 用の側だけで、
+  解決先（HDR テクスチャ側）を描画前に検査する公開 API が無いため。
+- **公開 API で済ませている部分**：バッファの確保（`renderer.initRenderTarget`）、描画後の GL エラー検査（`gl.getError`）。
+- **three.js の状態キャッシュとの関係**：
+  - three.js の `WebGLState.bindFramebuffer` は `FRAMEBUFFER` / `DRAW_FRAMEBUFFER` / `READ_FRAMEBUFFER` ごとにバインド状態をキャッシュする
+    （`FRAMEBUFFER` と `DRAW_FRAMEBUFFER` は同一として扱い、`READ_FRAMEBUFFER` は別に管理）。
+  - 検査では `DRAW_FRAMEBUFFER` / `FRAMEBUFFER` には一切触れず、`READ_FRAMEBUFFER` だけにバインドして
+    `checkFramebufferStatus(READ_FRAMEBUFFER)` で調べ、終了後に `READ_FRAMEBUFFER` を検査前の値へ正確に戻す。
+    これにより、実際のバインド状態と three.js のキャッシュの関係は検査の前後で変わらない。
+  - three.js は `READ_FRAMEBUFFER` を使う直前（MSAA の解決など）に必ず自分でバインドし、使用後に null に戻す。
+- **修正前の実装との違い**：修正前は `FRAMEBUFFER` に直接バインドして検査し、検査前の `FRAMEBUFFER`（= DRAW）の値で戻していた。
+  現在の呼び出し位置（`initRenderTarget` の直後で、どちらも null）では結果的に正しかったが、
+  検査中に DRAW 側がキャッシュと食い違うことと、READ 側を元の値ではなく DRAW の値に戻すことが潜在的な弱点だった。
+- **将来の three.js 更新時の注意**：
+  - 上記の内部プロパティ名が変わっていないか確認すること（`VERIFIED_THREE_REVISION` を更新する）。
+  - 内部プロパティが見つからない場合、事前検査は「判定不能」を返し、描画後の GL エラー検査だけで判定する
+    （コンソールに1回だけ注意を出す）。判定不能を「成功」とはみなさない。
