@@ -39,10 +39,17 @@ const TIME_EPSILON = 1e-9;
 /** 長い停止の判定 */
 export const STALL_ABSOLUTE_MS = 1000;
 export const STALL_MEDIAN_FACTOR = 10;
+/** 中央値の条件で停止とみなすフレームの下限（これ未満は中央値の10倍以上でも停止にしない） */
+export const STALL_MEDIAN_FLOOR_MS = 250;
 /** 中央値による判定に必要な、直近の通常フレームの数（足りなければ 1秒以上 の条件だけを使う） */
 export const STALL_MEDIAN_MIN_SAMPLES = 10;
 /** 中央値の計算に使う直近の通常フレームの数 */
 export const STALL_MEDIAN_HISTORY = 30;
+/**
+ * 「同程度の長さ」とみなす比率の範囲。中央値の条件で停止の疑いがあるフレームの直後に、
+ * 長さが 1/2〜2倍 のフレームが続いたら、単発の停止ではなく普段の速さが変わったとみなす。
+ */
+export const SPEED_CHANGE_RATIO = 2;
 
 export interface FrameWindowResult {
   fps: number;
@@ -52,9 +59,24 @@ export interface FrameWindowResult {
 }
 
 export interface StallStats {
+  /** 停止として除外したフレーム数（= 回数） */
   count: number;
   maxMs: number;
   lastMs: number;
+  /** 停止として除外した時間の合計（ms） */
+  totalMs: number;
+}
+
+/** 準備期間の後の、全フレームの内訳（通常の統計／停止として除外／判定待ち） */
+export interface FrameTotals {
+  normalFrames: number;
+  normalMs: number;
+  stallFrames: number;
+  stallMs: number;
+  /** 中央値の条件で停止の疑いがあり、次のフレームを待っているフレーム数（0 か 1） */
+  pendingFrames: number;
+  /** 普段の速さの変化とみなして、通常の統計に戻した回数 */
+  speedChanges: number;
 }
 
 /** FPS の表示：10未満は小数第1位まで、10以上は整数 */
@@ -68,7 +90,21 @@ function median(values: readonly number[]): number {
   return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
-/** 計測ロジック（DOM・実時間に依存しない。フレーム時間を与えて動かす。テスト対象） */
+function similarLength(a: number, b: number): boolean {
+  return Math.max(a, b) <= Math.min(a, b) * SPEED_CHANGE_RATIO;
+}
+
+/**
+ * 計測ロジック（DOM・実時間に依存しない。フレーム時間を与えて動かす。テスト対象）。
+ *
+ * 長い停止の判定（準備期間の後のフレームだけが対象）：
+ * - 1秒以上のフレームは、常に停止として除外する。
+ * - 直近の通常フレームの中央値の10倍以上 **かつ 250ms 以上** のフレームは「停止の疑い」として保留し、次のフレームで決める。
+ *   - 次が同程度（1/2〜2倍）の長さ → 普段の速さが変わったとみなし、2フレームとも通常の統計に入れ、中央値の履歴を新しい速さでやり直す。
+ *   - 次がそれ以外 → 単発の停止として除外する。
+ *   （中央値の履歴が10個そろうまでは、中央値の条件は使わない）
+ * 停止として除外したフレーム数・時間は、通常の統計と分けて記録し、隠さずに表示する。
+ */
 export class FrameStatsMeter {
   /** ページ読み込み開始から最初の描画完了まで（ms） */
   startupMs: number | null = null;
@@ -86,7 +122,17 @@ export class FrameStatsMeter {
   private elapsed = 0;
   private worst = 0;
   private readonly recentNormalMs: number[] = [];
-  private readonly stallStats: StallStats = { count: 0, maxMs: 0, lastMs: 0 };
+  /** 停止の疑いで保留中のフレーム（ms）。null なら保留なし */
+  private pendingMs: number | null = null;
+  private readonly stallStats: StallStats = { count: 0, maxMs: 0, lastMs: 0, totalMs: 0 };
+  private readonly totalsValue: FrameTotals = {
+    normalFrames: 0,
+    normalMs: 0,
+    stallFrames: 0,
+    stallMs: 0,
+    pendingFrames: 0,
+    speedChanges: 0,
+  };
 
   /** 直近の通常の統計（準備期間・長い停止を除く）。まだ無ければ null */
   result: FrameWindowResult | null = null;
@@ -99,9 +145,11 @@ export class FrameStatsMeter {
 
   /**
    * 準備期間を開始する。集計途中の通常の統計と、中央値の履歴はリセットする（速度が変わる可能性があるため）。
+   * 保留中の停止の疑いは、続きが無いので単発の停止として確定する（隠さない）。
    * 準備期間中に重ねて呼ばれた場合は、残り時間・残りフレーム数の長い方を採る。
    */
   beginWarmup(reason: string, spec: Readonly<WarmupSpec>): void {
+    this.resolvePendingAsStall();
     if (this.warmupReason === null) this.warmupMax = 0;
     this.warmupSecLeft = Math.max(this.warmupSecLeft, spec.seconds);
     this.warmupFramesLeft = Math.max(this.warmupFramesLeft, spec.frames);
@@ -116,9 +164,14 @@ export class FrameStatsMeter {
     return this.warmupReason;
   }
 
-  /** 長い停止の統計（回数・最大・直近）。準備期間中の停止は含まない */
+  /** 長い停止の統計（回数・最大・直近・合計）。準備期間中の停止は含まない */
   get stalls(): Readonly<StallStats> {
     return this.stallStats;
+  }
+
+  /** 準備期間の後の全フレームの内訳 */
+  get totals(): Readonly<FrameTotals> {
+    return { ...this.totalsValue, pendingFrames: this.pendingMs === null ? 0 : 1 };
   }
 
   /** 中央値による停止の判定に使える、直近の通常フレームの中央値（足りなければ null） */
@@ -126,11 +179,10 @@ export class FrameStatsMeter {
     return this.recentNormalMs.length >= STALL_MEDIAN_MIN_SAMPLES ? median(this.recentNormalMs) : null;
   }
 
-  /** そのフレーム時間が「長い停止」に当たるか */
-  isStall(frameMs: number): boolean {
-    if (frameMs >= STALL_ABSOLUTE_MS) return true;
+  /** 中央値の条件で「停止の疑い」に当たるか（1秒以上の条件は含まない） */
+  isMedianSuspect(frameMs: number): boolean {
     const med = this.normalMedianMs;
-    return med !== null && frameMs >= med * STALL_MEDIAN_FACTOR;
+    return med !== null && frameMs >= STALL_MEDIAN_FLOOR_MS && frameMs >= med * STALL_MEDIAN_FACTOR;
   }
 
   /** 1フレームを記録する（frameDt は秒）。表示を更新すべき変化があれば true */
@@ -153,17 +205,69 @@ export class FrameStatsMeter {
       return false;
     }
 
-    if (this.isStall(ms)) {
-      this.stallStats.count++;
-      this.stallStats.maxMs = Math.max(this.stallStats.maxMs, ms);
-      this.stallStats.lastMs = ms;
+    // ① 1秒以上：常に停止
+    if (ms >= STALL_ABSOLUTE_MS) {
+      this.resolvePendingAsStall();
+      this.recordStall(ms);
       return true;
     }
 
+    // ② 中央値の条件：停止の疑い → 保留して次のフレームで決める
+    if (this.pendingMs !== null) {
+      const pending = this.pendingMs;
+      if (similarLength(pending, ms) && ms >= STALL_MEDIAN_FLOOR_MS) {
+        // 同程度の長いフレームが続いた：普段の速さが変わったとみなし、2フレームとも通常の統計へ。中央値の履歴は新しい速さでやり直す
+        this.pendingMs = null;
+        this.totalsValue.speedChanges++;
+        this.recentNormalMs.length = 0;
+        this.addNormal(pending);
+        this.addNormal(ms);
+        return true;
+      }
+      // 続かなかった：保留していたフレームは単発の停止
+      this.resolvePendingAsStall();
+      if (this.isMedianSuspect(ms)) {
+        this.pendingMs = ms;
+        return true;
+      }
+      this.addNormal(ms);
+      return true;
+    }
+    if (this.isMedianSuspect(ms)) {
+      this.pendingMs = ms;
+      return false;
+    }
+
+    // ③ 通常のフレーム
+    return this.addNormal(ms);
+  }
+
+  private recordStall(ms: number): void {
+    this.stallStats.count++;
+    this.stallStats.maxMs = Math.max(this.stallStats.maxMs, ms);
+    this.stallStats.lastMs = ms;
+    this.stallStats.totalMs += ms;
+    this.totalsValue.stallFrames++;
+    this.totalsValue.stallMs += ms;
+  }
+
+  /** 保留中の停止の疑いを、単発の停止として確定する。確定したら true */
+  private resolvePendingAsStall(): boolean {
+    if (this.pendingMs === null) return false;
+    const ms = this.pendingMs;
+    this.pendingMs = null;
+    this.recordStall(ms);
+    return true;
+  }
+
+  /** 通常のフレームとして集計する。集計窓が満ちて結果が更新されたら true */
+  private addNormal(ms: number): boolean {
+    this.totalsValue.normalFrames++;
+    this.totalsValue.normalMs += ms;
     this.recentNormalMs.push(ms);
     if (this.recentNormalMs.length > STALL_MEDIAN_HISTORY) this.recentNormalMs.shift();
     this.frames++;
-    this.elapsed += frameDt;
+    this.elapsed += ms / 1000;
     this.worst = Math.max(this.worst, ms);
     if (this.elapsed < WINDOW_MIN_SEC - TIME_EPSILON || this.frames < WINDOW_MIN_FRAMES) return false;
     this.result = {
@@ -223,7 +327,11 @@ export class StatsOverlay {
     }
     // 長い停止は通常の FPS から除外しているため、起きたことを必ず表示する
     const st = m.stalls;
-    lines.push(st.count > 0 ? `停止 ${st.count}回（最大 ${(st.maxMs / 1000).toFixed(1)}s）` : '停止 なし');
+    lines.push(
+      st.count > 0
+        ? `停止 ${st.count}回（最大 ${(st.maxMs / 1000).toFixed(1)}s、通常の統計から除外 計 ${(st.totalMs / 1000).toFixed(1)}s）`
+        : '停止 なし',
+    );
     if (m.startupMs !== null && m.firstFrameMs !== null) {
       lines.push(
         `起動 ${(m.startupMs / 1000).toFixed(2)}s（初回フレーム ${m.firstFrameMs.toFixed(0)}ms）` +

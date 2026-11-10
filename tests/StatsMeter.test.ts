@@ -3,14 +3,16 @@ import {
   CHANGE_WARMUP,
   FrameStatsMeter,
   STALL_ABSOLUTE_MS,
+  STALL_MEDIAN_FLOOR_MS,
   STARTUP_WARMUP,
   WINDOW_MIN_FRAMES,
   formatFps,
 } from '../src/debug/StatsOverlay';
+import { createRandom } from '../src/core/random';
 import { readDevicePixelRatio } from '../src/platform/ViewportManager';
 
 /**
- * フレーム時間（秒）を直接与えて動かす。実時間には依存しない。
+ * フレーム時間（秒）を直接与えて動かす。実時間には依存しない。乱数は種を固定（再現可能）。
  */
 const F60 = 1 / 60;
 
@@ -25,176 +27,266 @@ function startAndFinishWarmup(m: FrameStatsMeter, dt = F60): void {
   while (m.warmingUp && guard++ < 10000) m.push(dt);
 }
 
+/** 平均 fps、ばらつき ±jitter の通常フレームを n 個（種固定の乱数） */
+function jitteredFrames(fps: number, jitter: number, n: number, seed: number): number[] {
+  const rand = createRandom(seed);
+  return Array.from({ length: n }, () => (1 / fps) * (1 + (rand() * 2 - 1) * jitter));
+}
+
+/** 不変条件：FPS = 1000 ÷ 平均フレーム時間、内訳の合計が投入したフレームと一致 */
+function expectConsistent(m: FrameStatsMeter): void {
+  if (m.result) expect(m.result.fps * m.result.avgMs).toBeCloseTo(1000, 6);
+  const t = m.totals;
+  expect(t.stallFrames).toBe(m.stalls.count);
+  expect(t.stallMs).toBeCloseTo(m.stalls.totalMs, 6);
+}
+
+describe('① 1秒以上のフレーム', () => {
+  it('1秒以上は、中央値の履歴がなくても常に停止として除外する（従来の定義を維持）', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    m.push(STALL_ABSOLUTE_MS / 1000);
+    feed(m, F60, 40);
+    m.push(7.6);
+    feed(m, F60, 40);
+    expect(m.stalls).toMatchObject({ count: 2, maxMs: 7600 });
+    expect(m.stalls.totalMs).toBeCloseTo(8600, 6);
+    expect(m.totals).toMatchObject({ stallFrames: 2, normalFrames: 80 });
+    expect(m.result!.maxMs).toBeLessThan(17);
+    expectConsistent(m);
+  });
+
+  it('1秒以上のフレームが2回続いても、どちらも停止のまま（速さの変化とはみなさない）', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    feed(m, F60, 20);
+    m.push(1.5);
+    m.push(1.4);
+    feed(m, F60, 20);
+    expect(m.stalls.count).toBe(2);
+    expect(m.totals.speedChanges).toBe(0);
+  });
+});
+
+describe('② 250ms 未満は、中央値の10倍以上でも停止にしない', () => {
+  it('60fps（中央値 16.7ms）で 200ms のフレーム → 停止にしない（通常の統計に入る）', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    feed(m, F60, 20);
+    expect(m.isMedianSuspect(200)).toBe(false);
+    expect(m.isMedianSuspect(STALL_MEDIAN_FLOOR_MS)).toBe(true);
+    m.push(0.2);
+    feed(m, F60, 20);
+    expect(m.stalls.count).toBe(0);
+    expect(m.totals.normalFrames).toBe(41);
+  });
+
+  it('前回の不具合の再現：速いフレーム（16ms）の直後に本来の速さ（約90〜280ms）へ戻っても、停止と誤判定しない', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    feed(m, 0.016, 20);
+    const slow = jitteredFrames(1 / 0.0884, 0.5, 120, 11); // 平均 88.4ms、44〜133ms
+    // 集計窓ごとに、窓に入ったフレームの実際の平均と、表示の平均が一致することを確かめる
+    let windowFrames: number[] = [];
+    let last = m.result;
+    let checkedWindows = 0;
+    for (const dt of slow) {
+      m.push(dt);
+      windowFrames.push(dt);
+      if (m.result !== last) {
+        const avg = (windowFrames.reduce((a, b) => a + b, 0) / windowFrames.length) * 1000;
+        if (checkedWindows > 0) expect(m.result!.avgMs).toBeCloseTo(avg, 6); // 最初の窓は速いフレームを含むため除く
+        expect(m.result!.frames).toBe(checkedWindows > 0 ? windowFrames.length : m.result!.frames);
+        windowFrames = [];
+        last = m.result;
+        checkedWindows++;
+      }
+    }
+    expect(m.stalls.count).toBe(0);
+    expect(checkedWindows).toBeGreaterThan(5);
+    expect(m.result!.fps).toBeLessThan(20);
+    expectConsistent(m);
+  });
+});
+
+describe('③④ 単発の停止と、普段の速さの変化', () => {
+  it('③ 単発の長いフレーム（60fps 中の 400ms）は停止として除外する', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    feed(m, F60, 20);
+    m.push(0.4); // 停止の疑い（保留）
+    expect(m.totals.pendingFrames).toBe(1);
+    m.push(F60); // 続かなかった → 単発の停止
+    expect(m.totals.pendingFrames).toBe(0);
+    expect(m.stalls).toMatchObject({ count: 1, lastMs: 400 });
+    feed(m, F60, 30);
+    expect(m.result!.maxMs).toBeLessThan(17);
+    expectConsistent(m);
+  });
+
+  it('④ 同程度の長いフレームが続いたら、普段の速さの変化として通常の統計に戻す（60fps → 約3fps）', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    feed(m, F60, 20);
+    m.push(0.3);
+    m.push(0.32); // 同程度 → 速さの変化
+    expect(m.stalls.count).toBe(0);
+    expect(m.totals.speedChanges).toBe(1);
+    expect(m.totals.normalFrames).toBe(22);
+    feed(m, 0.31, 30);
+    expect(m.stalls.count).toBe(0);
+    expect(m.result!.avgMs).toBeCloseTo(310, 0);
+  });
+
+  it('長さが大きく違うフレームが続いた場合は、どちらも単発の停止（1/2〜2倍の範囲外）', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    feed(m, F60, 20);
+    m.push(0.3);
+    m.push(0.9); // 3倍：同程度ではない → 0.3 は単発の停止、0.9 は新たな疑い
+    m.push(F60); // 0.9 も単発の停止
+    expect(m.stalls.count).toBe(2);
+    expect(m.totals.speedChanges).toBe(0);
+  });
+
+  it('⑤ 速さが変わった後も FPS = 1000 ÷ 平均フレーム時間 が成り立ち、新しい速さで集計される', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    feed(m, F60, 30);
+    for (const dt of jitteredFrames(4, 0.15, 60, 5)) m.push(dt); // 60fps → 約4fps（250ms 前後）
+    expect(m.stalls.count).toBe(0);
+    expect(m.result!.fps).toBeGreaterThan(3);
+    expect(m.result!.fps).toBeLessThan(5);
+    expectConsistent(m);
+  });
+});
+
+describe('⑥ 低 FPS の環境で停止の判定が過剰に起きない', () => {
+  for (const fps of [5, 10, 15, 30, 60]) {
+    it(`約${fps}fps（ばらつき ±40%、600フレーム）で停止 0回、表示は実際の平均と一致`, () => {
+      const m = new FrameStatsMeter();
+      startAndFinishWarmup(m, 1 / fps);
+      const frames = jitteredFrames(fps, 0.4, 600, fps);
+      for (const dt of frames) m.push(dt);
+      expect(m.stalls.count).toBe(0);
+      expect(m.totals.normalFrames).toBe(600);
+      const sumMs = frames.reduce((a, b) => a + b, 0) * 1000;
+      expect(m.totals.normalMs).toBeCloseTo(sumMs, 6);
+      expect(m.result!.fps).toBeGreaterThan(fps * 0.75);
+      expect(m.result!.fps).toBeLessThan(fps * 1.35);
+      expectConsistent(m);
+    });
+  }
+
+  it('約30fps の中の単発の 400ms は停止として検出される（中央値 33ms の10倍・250ms 以上）', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m, 1 / 30);
+    for (const dt of jitteredFrames(30, 0.2, 30, 3)) m.push(dt);
+    m.push(0.4);
+    for (const dt of jitteredFrames(30, 0.2, 30, 4)) m.push(dt);
+    expect(m.stalls.count).toBe(1);
+  });
+
+  it('約5fps（中央値 200ms）では、中央値の条件は 2秒以上になるため、1秒以上の条件だけが効く', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m, 0.2);
+    feed(m, 0.2, 20);
+    expect(m.isMedianSuspect(900)).toBe(false);
+    m.push(0.9); // 遅いが停止ではない（通常の最大値として表示される）
+    m.push(1.2); // 1秒以上は停止
+    feed(m, 0.2, 20);
+    expect(m.stalls.count).toBe(1);
+  });
+});
+
 describe('準備期間', () => {
-  it('① 起動後25フレーム目に長い停止（8秒）が起きても、準備期間中の停止として扱う（通常の統計・停止の回数に入らない）', () => {
+  it('⑦ 起動後25フレーム目の長い停止（8秒）は準備期間中の停止として扱い、通常の統計にも停止の回数にも入れない', () => {
     const m = new FrameStatsMeter();
     m.recordStartup(300, 150);
     feed(m, F60, 24);
-    m.push(8.0); // 25フレーム目：8秒の停止（経過時間は1秒を超えるが、フレーム数が30に満たない）
+    m.push(8.0);
     expect(m.warmingUp).toBe('起動直後');
-    feed(m, F60, 5); // 30フレーム目で準備期間が終わる
+    feed(m, F60, 5);
     expect(m.warmingUp).toBeNull();
     expect(m.lastWarmupMaxMs).toBeCloseTo(8000, 6);
     expect(m.stalls.count).toBe(0);
+    expect(m.totals.normalFrames).toBe(0);
     feed(m, F60, 60);
     expect(m.result!.maxMs).toBeLessThan(17);
   });
 
-  it('② 起動時の準備期間は「1秒以上 かつ 30フレーム以上」で終わる', () => {
-    // 速いフレーム：30フレームでは0.5秒しか経たない → 1秒（60フレーム）まで続く
-    const fast = new FrameStatsMeter();
-    fast.recordStartup(300, 150);
-    feed(fast, F60, 59);
-    expect(fast.warmingUp).toBe('起動直後');
-    fast.push(F60);
-    expect(fast.warmingUp).toBeNull();
-    // 遅いフレーム（0.2秒）：1秒は5フレームで経つが、30フレームまで続く
+  it('起動時は「1秒以上 かつ 30フレーム以上」、変更後は「0.5秒以上 かつ 15フレーム以上」で終わる', () => {
+    expect(STARTUP_WARMUP).toEqual({ seconds: 1, frames: 30 });
+    expect(CHANGE_WARMUP).toEqual({ seconds: 0.5, frames: 15 });
     const slow = new FrameStatsMeter();
     slow.recordStartup(300, 150);
     feed(slow, 0.2, 29);
     expect(slow.warmingUp).toBe('起動直後');
     slow.push(0.2);
     expect(slow.warmingUp).toBeNull();
-    expect(STARTUP_WARMUP).toEqual({ seconds: 1, frames: 30 });
+    slow.beginWarmup('画質変更', CHANGE_WARMUP);
+    feed(slow, 0.2, 14);
+    expect(slow.warmingUp).toBe('画質変更');
+    slow.push(0.2);
+    expect(slow.warmingUp).toBeNull();
   });
 
-  it('③ 画質変更・タブ復帰の準備期間は「0.5秒以上 かつ 15フレーム以上」で終わる', () => {
-    expect(CHANGE_WARMUP).toEqual({ seconds: 0.5, frames: 15 });
-    for (const reason of ['画質変更', 'タブ復帰']) {
-      const m = new FrameStatsMeter();
-      startAndFinishWarmup(m);
-      m.beginWarmup(reason, CHANGE_WARMUP);
-      feed(m, 0.1, 14); // 1.4秒経過・14フレーム → まだ
-      expect(m.warmingUp).toBe(reason);
-      m.push(0.1); // 15フレーム目
-      expect(m.warmingUp).toBeNull();
-
-      const fast = new FrameStatsMeter();
-      startAndFinishWarmup(fast);
-      fast.beginWarmup(reason, CHANGE_WARMUP);
-      feed(fast, F60, 29); // 15フレームは超えたが0.483秒
-      expect(fast.warmingUp).toBe(reason);
-      fast.push(F60); // 0.5秒
-      expect(fast.warmingUp).toBeNull();
-    }
-  });
-});
-
-describe('長い停止', () => {
-  it('④ 準備期間の後の長い停止は、通常の FPS・平均・最大から除外される', () => {
-    const m = new FrameStatsMeter();
-    startAndFinishWarmup(m, 0.2);
-    feed(m, 0.2, 5);
-    m.push(7.5); // 停止
-    feed(m, 0.2, 5);
-    expect(m.result).not.toBeNull();
-    expect(m.result!.avgMs).toBeCloseTo(200, 6);
-    expect(m.result!.maxMs).toBeCloseTo(200, 6);
-    expect(m.result!.fps).toBeCloseTo(5, 6);
-  });
-
-  it('⑤ 停止の回数・最大時間・直近の時間を記録する', () => {
-    const m = new FrameStatsMeter();
-    startAndFinishWarmup(m);
-    m.push(1.2);
-    feed(m, F60, 20);
-    m.push(7.6);
-    feed(m, F60, 20);
-    m.push(2.0);
-    expect(m.stalls).toEqual({ count: 3, maxMs: 7600, lastMs: 2000 });
-  });
-
-  it('1秒以上は、中央値の履歴がなくても停止とみなす', () => {
-    const m = new FrameStatsMeter();
-    startAndFinishWarmup(m);
-    expect(m.normalMedianMs).toBeNull(); // 準備期間の終了直後は履歴がない
-    expect(m.isStall(STALL_ABSOLUTE_MS)).toBe(true);
-    expect(m.isStall(999)).toBe(false);
-  });
-
-  it('中央値の10倍以上は停止。ただし通常フレームが10個そろうまでは中央値で判定しない', () => {
-    const m = new FrameStatsMeter();
-    startAndFinishWarmup(m);
-    feed(m, F60, 9);
-    expect(m.isStall(200)).toBe(false); // 履歴が9個：中央値を使わない
-    m.push(F60);
-    expect(m.normalMedianMs).toBeCloseTo(16.667, 2);
-    expect(m.isStall(200)).toBe(true); // 16.7ms × 10 = 167ms 以上
-    expect(m.isStall(150)).toBe(false);
-  });
-
-  it('準備期間中の長いフレームは、停止の回数に入らない', () => {
-    const m = new FrameStatsMeter();
-    startAndFinishWarmup(m);
-    m.beginWarmup('画質変更', CHANGE_WARMUP);
-    m.push(3.0);
-    feed(m, F60, 30);
-    expect(m.stalls.count).toBe(0);
-    expect(m.lastWarmupMaxMs).toBeCloseTo(3000, 6);
-  });
-});
-
-describe('FPS の表示と集計', () => {
-  it('⑥ 10未満は小数第1位まで表示する', () => {
-    expect(formatFps(0.14)).toBe('0.1');
-    expect(formatFps(4.93)).toBe('4.9');
-    expect(formatFps(9.9)).toBe('9.9');
-  });
-
-  it('⑦ 10以上は整数で表示する', () => {
-    expect(formatFps(10)).toBe('10');
-    expect(formatFps(60)).toBe('60');
-    expect(formatFps(59.6)).toBe('60');
-  });
-
-  it('⑧ 200ms 程度のフレームでも、10フレーム以上ためてから集計する（2〜3フレームで値を出さない）', () => {
-    const m = new FrameStatsMeter();
-    startAndFinishWarmup(m, 0.2);
-    feed(m, 0.2, WINDOW_MIN_FRAMES - 1); // 1.8秒経過しても9フレーム
-    expect(m.result).toBeNull();
-    m.push(0.2);
-    expect(m.result).toMatchObject({ frames: 10 });
-    expect(m.result!.fps).toBeCloseTo(5, 6);
-    // 値がばらつくフレーム（180〜280ms）でも、10フレーム単位で安定する
-    const jitter = [0.18, 0.28, 0.2, 0.22, 0.19, 0.27, 0.21, 0.2, 0.25, 0.2];
-    for (const dt of jitter) m.push(dt);
-    expect(m.result!.avgMs).toBeCloseTo(220, 6);
-  });
-
-  it('60fps でも「0.5秒以上 かつ 10フレーム以上」で集計する', () => {
-    const m = new FrameStatsMeter();
-    startAndFinishWarmup(m);
-    feed(m, F60, 29);
-    expect(m.result).toBeNull();
-    m.push(F60);
-    expect(m.result!.fps).toBeCloseTo(60, 6);
-  });
-
-  it('⑨ FPS = 1000 ÷ 平均フレーム時間 が常に成り立つ', () => {
-    const m = new FrameStatsMeter();
-    startAndFinishWarmup(m);
-    const seq = [0.016, 0.033, 0.05, 0.2, 0.011, 0.09, 0.3, 0.017, 0.12, 0.045];
-    for (let i = 0; i < 200; i++) {
-      m.push(seq[i % seq.length]!);
-      if (m.result) expect(m.result.fps).toBeCloseTo(1000 / m.result.avgMs, 9);
-    }
-    expect(m.result).not.toBeNull();
-  });
-
-  it('⑩ タブ非表示 → 復帰：復帰後は準備期間からやり直し、非表示の間の時間は統計に入らない', () => {
-    // Game は非表示でループを止め、復帰時に beginWarmup('タブ復帰') を呼ぶ。復帰直後のフレームの経過時間は 0（GameLoop が lastTime を消す）
+  it('⑧ タブ非表示 → 復帰：準備期間からやり直し、中央値の履歴と集計途中の値は新しくなる。保留中の疑いは単発の停止として確定する', () => {
     const m = new FrameStatsMeter();
     startAndFinishWarmup(m);
     feed(m, F60, 60);
-    const before = m.result!;
+    m.push(0.4); // 停止の疑い（保留中）でタブが隠れた
     m.beginWarmup('タブ復帰', CHANGE_WARMUP);
+    expect(m.stalls.count).toBe(1);
+    expect(m.normalMedianMs).toBeNull();
     expect(m.push(0)).toBe(false); // 復帰直後のフレーム（経過時間0）は無視
-    expect(m.warmingUp).toBe('タブ復帰');
-    feed(m, F60, 30);
+    feed(m, 0.05, 15); // 復帰後は 20fps
     expect(m.warmingUp).toBeNull();
-    feed(m, F60, 30);
-    expect(m.result!.fps).toBeCloseTo(before.fps, 6);
-    expect(m.stalls.count).toBe(0);
+    feed(m, 0.05, 20);
+    expect(m.result!.fps).toBeCloseTo(20, 6);
+    expect(m.stalls.count).toBe(1);
+  });
+});
+
+describe('表示と不変条件', () => {
+  it('⑨ 10未満は小数第1位、10以上は整数', () => {
+    expect(formatFps(0.14)).toBe('0.1');
+    expect(formatFps(4.93)).toBe('4.9');
+    expect(formatFps(9.9)).toBe('9.9');
+    expect(formatFps(10)).toBe('10');
+    expect(formatFps(59.6)).toBe('60');
+  });
+
+  it('200ms のフレームでも、10フレーム以上ためてから集計する', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m, 0.2);
+    feed(m, 0.2, WINDOW_MIN_FRAMES - 1);
+    expect(m.result).toBeNull();
+    m.push(0.2);
+    expect(m.result).toMatchObject({ frames: 10 });
+  });
+
+  it('⑩ すべての条件（5/10/15/30/60fps、単発の停止、1秒以上の停止、速さの変化）で FPS = 1000 ÷ 平均 と内訳の整合が成り立つ', () => {
+    const rand = createRandom(99);
+    for (const fps of [5, 10, 15, 30, 60]) {
+      const m = new FrameStatsMeter();
+      startAndFinishWarmup(m, 1 / fps);
+      let pushedAfterWarmup = 0;
+      for (let i = 0; i < 800; i++) {
+        let dt = (1 / fps) * (0.7 + rand() * 0.6);
+        if (i % 97 === 50) dt = 1.3; // 1秒以上
+        if (i % 131 === 70) dt = Math.max(0.3, (10 / fps) * 1.2); // 単発の長いフレーム
+        if (i === 400) dt = 1 / (fps / 3); // ここから速さが 1/3 に変わる（以降も遅いまま）
+        if (i > 400) dt = (3 / fps) * (0.85 + rand() * 0.3);
+        m.push(dt);
+        pushedAfterWarmup++;
+        if (m.result) expect(m.result.fps * m.result.avgMs).toBeCloseTo(1000, 6);
+      }
+      const t = m.totals;
+      expect(t.normalFrames + t.stallFrames + t.pendingFrames).toBe(pushedAfterWarmup);
+      expect(t.stallFrames).toBe(m.stalls.count);
+      expect(m.stalls.count).toBeGreaterThan(0); // 1秒以上の停止は必ず数えられている
+    }
   });
 
   it('経過時間が0・負・NaN のフレームは無視する', () => {
