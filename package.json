@@ -11,10 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "three": "^0.187.0"
+    "three": "0.187.0"
   },
   "devDependencies": {
-    "@types/three": "^0.187.0",
+    "@types/three": "0.187.0",
     "lil-gui": "^0.21.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.7",

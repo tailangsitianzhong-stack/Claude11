@@ -8,7 +8,13 @@ import {
   presetForLevel,
   settingsForLevel,
 } from '../src/platform/QualitySettings';
-import { parseFps, parseLevel } from '../src/platform/QualityManager';
+import {
+  DEFAULT_FRAME_RATE_MODE,
+  DEFAULT_QUALITY_LEVEL,
+  QualityManager,
+  parseFps,
+  parseLevel,
+} from '../src/platform/QualityManager';
 
 /** 負荷の目安：大きいほど重い（段階が上がるごとに単調に減ることを確認する） */
 function cost(level: number): number[] {
@@ -86,6 +92,7 @@ describe('URLパラメータの解釈', () => {
     expect(parseLevel('5')).toBe(5);
     expect(parseLevel('99')).toBe(9);
     expect(parseLevel('abc')).toBeNull();
+    expect(parseLevel('toString')).toBeNull(); // オブジェクトの組み込みプロパティ名を誤って受け付けない
     expect(parseLevel(null)).toBeNull();
   });
 
@@ -93,5 +100,32 @@ describe('URLパラメータの解釈', () => {
     expect(parseFps('30')).toBe(30);
     expect(parseFps('60')).toBe(60);
     expect(parseFps('45')).toBeNull();
+  });
+});
+
+describe('QualityManager（A1：手動切り替えのみ）', () => {
+  it('URLパラメータが無ければ固定の初期値（段階3・60fps）で始まる', () => {
+    const q = QualityManager.fromUrl('');
+    expect(DEFAULT_QUALITY_LEVEL).toBe(3);
+    expect(q.state.level).toBe(DEFAULT_QUALITY_LEVEL);
+    expect(q.state.frameRateMode).toBe(DEFAULT_FRAME_RATE_MODE);
+  });
+
+  it('URLパラメータで初期値を指定できる', () => {
+    const q = QualityManager.fromUrl('?quality=low&fps=30');
+    expect(q.state.level).toBe(7);
+    expect(q.state.frameRateMode).toBe(30);
+  });
+
+  it('変更を通知し、同じ値への変更は通知しない', () => {
+    const q = QualityManager.fromUrl('?quality=0');
+    const seen: number[] = [];
+    q.subscribe((s) => seen.push(s.level));
+    q.setLevel(5);
+    q.setLevel(5);
+    q.setPreset('low');
+    q.setFrameRateMode(30);
+    expect(seen).toEqual([0, 5, 7, 7]);
+    expect(q.state.frameRateMode).toBe(30);
   });
 });

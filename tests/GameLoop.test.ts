@@ -18,14 +18,13 @@ describe('FixedStepAccumulator', () => {
     expect(total).toBe(120);
   });
 
-  it('120Hzの描画では2フレームに1ティックになり、alphaで補間できる', () => {
+  it('120Hzの描画では2フレームに1ティック（端数の時間は次のフレームへ持ち越す）', () => {
     const acc = new FixedStepAccumulator(DT, 5);
-    const r1 = acc.advance(1 / 120);
-    expect(r1.steps).toBe(0);
-    expect(r1.alpha).toBeCloseTo(0.5, 5);
-    const r2 = acc.advance(1 / 120);
-    expect(r2.steps).toBe(1);
-    expect(r2.alpha).toBeCloseTo(0, 5);
+    expect(acc.advance(1 / 120).steps).toBe(0);
+    expect(acc.advance(1 / 120).steps).toBe(1);
+    let total = 0;
+    for (let i = 0; i < 240; i++) total += acc.advance(1 / 120).steps;
+    expect(total).toBe(120);
   });
 
   it('1フレームのティック数は上限で打ち切り、余りを捨てる', () => {

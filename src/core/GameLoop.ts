@@ -1,16 +1,18 @@
 /**
- * 固定間隔（既定60Hz）のゲーム処理と、可変間隔の描画を分離するループ。
+ * 固定間隔（既定60Hz）のゲーム処理と、可変間隔の描画を分離するループ（A1 の基盤）。
  *
  * - update(dt) は常に固定の dt で呼ばれる（決定的な挙動・将来のオンライン対戦の土台）。
- * - render(alpha) は描画フレームごとに呼ばれ、alpha は「前回のティックから経過した割合」(0..1)。
- * - フレームレート上限（30fpsモードなど）を設定できる。
+ * - render(frameDt) は描画フレームごとに呼ばれる。
+ * - フレームレート上限（30fpsモード）を手動で設定できる。
+ *
+ * ティック間の描画補間（alpha）は B2 で実装する。
+ * FixedStepAccumulator は端数の時間（accumulator）を保持しているので、
+ * B2 では `accumulator / fixedDt` を補間係数として返す形で拡張できる。
  */
 
 export interface FixedStepResult {
   /** このフレームで実行するティック数 */
   steps: number;
-  /** 描画用の補間係数 (0..1) */
-  alpha: number;
   /** 処理が追いつかず切り捨てた時間（秒） */
   droppedTime: number;
 }
@@ -43,7 +45,7 @@ export class FixedStepAccumulator {
     }
     if (this.accumulator < 0) this.accumulator = 0;
 
-    return { steps, alpha: this.accumulator / this.fixedDt, droppedTime };
+    return { steps, droppedTime };
   }
 
   reset(): void {
@@ -88,8 +90,8 @@ export class FrameLimiter {
 export interface GameLoopCallbacks {
   /** 固定間隔のゲーム処理 */
   update(dt: number): void;
-  /** 描画（alpha: ティック間の補間係数、frameDt: 前回描画からの実時間[秒]） */
-  render(alpha: number, frameDt: number): void;
+  /** 描画（frameDt: 前回描画からの実時間[秒]。初回は 0） */
+  render(frameDt: number): void;
 }
 
 export class GameLoop {
@@ -135,8 +137,8 @@ export class GameLoop {
     const frameDt = this.lastTime === null ? 0 : (now - this.lastTime) / 1000;
     this.lastTime = now;
 
-    const { steps, alpha } = this.accumulator.advance(frameDt);
+    const { steps } = this.accumulator.advance(frameDt);
     for (let i = 0; i < steps; i++) this.callbacks.update(this.fixedDt);
-    this.callbacks.render(alpha, frameDt);
+    this.callbacks.render(frameDt);
   };
 }

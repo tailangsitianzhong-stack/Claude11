@@ -19,7 +19,13 @@ import type { QualityLevelSettings } from '../platform/QualitySettings';
 import { applyShadowQuality } from '../render/shadows';
 
 /**
- * チェックポイントA1 専用の仮シーン（A2 でアリーナに置き換える）。
+ * チェックポイントA1 専用の仮シーン。
+ * **A2 でアリーナに置き換えるときに、このファイルごと削除する。**
+ *
+ * OrbitControls（マウスのドラッグ・ホイール、指1本の回転・2本指の拡大縮小）は、
+ * この仮シーンを眺めるためだけのデバッグ用の視点操作であり、
+ * B1〜B3 で実装する入力システム（InputCommand・PointerRouter・Pointer Lock）とは無関係。
+ * 仮シーンと一緒に削除する。
  *
  * 確認する内容：
  * - 描画パイプライン（MSAA・HDR・Bloom・トーンマッピング・影）が正しく動くこと
@@ -44,6 +50,7 @@ export class TestScene {
     this.camera = new PerspectiveCamera(50, 1, 0.1, 200);
     this.camera.position.set(6.5, 3.2, 8.5);
 
+    // 仮シーン専用のデバッグ用視点操作（A2 で削除）
     this.controls = new OrbitControls(this.camera, domElement);
     this.controls.target.set(0, 1.0, 0);
     this.controls.enableDamping = true;

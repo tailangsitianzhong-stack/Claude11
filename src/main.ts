@@ -1,10 +1,12 @@
 import './styles.css';
+import type GUI from 'lil-gui';
 import { Game } from './core/Game';
 import { isWebGL2Available } from './platform/webgl';
 
 function showFatal(container: HTMLElement, message: string): void {
   const el = document.createElement('div');
   el.className = 'fatal-message';
+  el.setAttribute('data-testid', 'fatal');
   el.textContent = message;
   container.appendChild(el);
 }
@@ -22,18 +24,22 @@ async function boot(): Promise<void> {
     return;
   }
 
-  const game = new Game(container);
+  const game = new Game(container, { onFatal: (message) => showFatal(container, message) });
   game.start();
 
   const params = new URLSearchParams(location.search);
   if (params.get('stats') === '0') game.stats.setVisible(false);
-  if (import.meta.env.DEV || params.get('debug') === '1') {
-    const { createDevPanel } = await import('./debug/DevPanel');
-    await createDevPanel(game.quality, { onToggleStats: (v) => game.stats.setVisible(v) });
-  }
 
   // 自動テスト・デバッグ用の参照
-  (window as unknown as { __game?: Game }).__game = game;
+  const debugGlobals = window as unknown as { __game?: Game; __devPanel?: GUI };
+  debugGlobals.__game = game;
+
+  if (import.meta.env.DEV || params.get('debug') === '1') {
+    const { createDevPanel } = await import('./debug/DevPanel');
+    debugGlobals.__devPanel = await createDevPanel(game.quality, {
+      onToggleStats: (v) => game.stats.setVisible(v),
+    });
+  }
 }
 
 boot().catch((err: unknown) => {
