@@ -1,0 +1,86 @@
+:root {
+  --bg: #1b2233;
+  --fg: #e8ecf4;
+  --muted: #9aa6bd;
+  --panel: rgba(12, 16, 26, 0.72);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/*
+ * 描画領域（canvas）だけ、ブラウザ標準のタッチ操作（スクロール・ピンチ拡大・ダブルタップ拡大）を止める。
+ * A1 では仮シーンの OrbitControls が指の操作を受け取るために必要。
+ * 開発パネルなど canvas 以外の要素は、通常どおりスクロール・拡大・文字選択ができる。
+ * （タッチ操作全体の誤操作対策は B1 で設計どおりに実装する）
+ */
+#app canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+.stats-overlay {
+  position: absolute;
+  top: calc(8px + env(safe-area-inset-top));
+  left: calc(8px + env(safe-area-inset-left));
+  padding: 6px 8px;
+  background: var(--panel);
+  border-radius: 6px;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.fatal-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  line-height: 1.7;
+  color: var(--fg);
+}
+
+/*
+ * 開発パネル（lil-gui 0.21 のクラス名は lil-root / lil-auto-place / lil-children）。
+ * lil-gui 標準の配置（右上に固定、画面の高さまで）を、安全領域（ノッチなど）の内側に収める。
+ * パネルが画面より高い場合は lil-gui 標準どおり .lil-children の中をスクロールできる。
+ */
+body > .lil-gui.lil-root.lil-auto-place {
+  top: calc(8px + env(safe-area-inset-top));
+  right: calc(8px + env(safe-area-inset-right));
+  max-height: calc(100% - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+
+body > .lil-gui.lil-root > .lil-children {
+  /* パネル内のスクロールが端に達しても、背後のページへ伝わらないようにする */
+  overscroll-behavior: contain;
+}
