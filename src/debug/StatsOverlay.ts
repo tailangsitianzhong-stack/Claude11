@@ -215,8 +215,10 @@ export class FrameStatsMeter {
     // ② 中央値の条件：停止の疑い → 保留して次のフレームで決める
     if (this.pendingMs !== null) {
       const pending = this.pendingMs;
-      if (similarLength(pending, ms) && ms >= STALL_MEDIAN_FLOOR_MS) {
-        // 同程度の長いフレームが続いた：普段の速さが変わったとみなし、2フレームとも通常の統計へ。中央値の履歴は新しい速さでやり直す
+      if (similarLength(pending, ms)) {
+        // 保留中のフレームと同程度（1/2〜2倍）のフレームが続いた：普段の速さが変わったとみなし、2フレームとも通常の統計へ。
+        // 中央値の履歴は新しい速さでやり直す。250ms の下限は最初の疑いの検出（isMedianSuspect）だけの条件で、ここでは使わない。
+        // （1秒以上のフレームは、この判定より前で常に停止として扱っている）
         this.pendingMs = null;
         this.totalsValue.speedChanges++;
         this.recentNormalMs.length = 0;

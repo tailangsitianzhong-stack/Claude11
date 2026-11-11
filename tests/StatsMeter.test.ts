@@ -138,6 +138,40 @@ describe('③④ 単発の停止と、普段の速さの変化', () => {
     expect(m.result!.avgMs).toBeCloseTo(310, 0);
   });
 
+  it('④-2 停止の疑い（300ms）の次が 250ms 未満（200ms）でも、1/2〜2倍の範囲内なら速さの変化として通常の統計に戻す', () => {
+    const m = new FrameStatsMeter();
+    startAndFinishWarmup(m);
+    feed(m, F60, 20); // 直前の通常フレームは約16.7ms
+    const before = m.totals;
+    expect(m.normalMedianMs).toBeCloseTo(16.667, 2);
+
+    m.push(0.3); // 停止の疑い（中央値の10倍以上・250ms 以上）
+    expect(m.totals.pendingFrames).toBe(1);
+    m.push(0.2); // 300ms と 200ms は 1/2〜2倍の範囲内 → 速さの変化
+
+    // 停止は0回、2フレームとも通常の統計に加算される
+    expect(m.stalls.count).toBe(0);
+    expect(m.totals).toMatchObject({ stallFrames: 0, pendingFrames: 0, speedChanges: 1 });
+    expect(m.totals.normalFrames).toBe(before.normalFrames + 2);
+    expect(m.totals.normalMs).toBeCloseTo(before.normalMs + 300 + 200, 6);
+
+    // 中央値の履歴は新しい速さでやり直されている（2フレームだけ → まだ中央値の判定には使わない）
+    expect(m.normalMedianMs).toBeNull();
+
+    // その後 200ms 前後のフレームが続いても、停止と誤判定しない
+    for (const dt of jitteredFrames(5, 0.3, 60, 21)) m.push(dt);
+    expect(m.stalls.count).toBe(0);
+    expect(m.normalMedianMs).toBeGreaterThan(150);
+    expect(m.normalMedianMs).toBeLessThan(250);
+
+    // FPS = 1000 ÷ 平均フレーム時間 が成り立つ
+    expect(m.result).not.toBeNull();
+    expect(m.result!.fps * m.result!.avgMs).toBeCloseTo(1000, 6);
+    expect(m.result!.fps).toBeGreaterThan(3.5);
+    expect(m.result!.fps).toBeLessThan(7);
+    expectConsistent(m);
+  });
+
   it('長さが大きく違うフレームが続いた場合は、どちらも単発の停止（1/2〜2倍の範囲外）', () => {
     const m = new FrameStatsMeter();
     startAndFinishWarmup(m);
