@@ -33,6 +33,7 @@ import { MATERIAL, PALETTE } from './palette';
  *   火皿     0.98  〜 1.30  口の直径 0.96（ブロンズ）
  *   炭       1.25           直径 0.84（光る円盤）
  *   炎       1.20  〜 2.20  幅 0.80（外側）／ 0.44（芯）、常にカメラの方を向く板
+ *            ＋ 真上から見たとき用の水平の炎（1.28、直径 0.80。真上に近い視点でだけ現れる）
  *   光だまり 段差の上        直径 3.8
  */
 export const BRAZIER_PARTS = {
@@ -41,7 +42,7 @@ export const BRAZIER_PARTS = {
   collar: { height: 0.06, diameter: 0.48 },
   bowl: { height: 0.32, rimDiameter: 0.96 },
   coal: { y: 1.25, diameter: 0.84 },
-  flame: { base: 1.2, height: 1.0, width: 0.8, coreHeight: 0.62, coreWidth: 0.44 },
+  flame: { base: 1.2, height: 1.0, width: 0.8, coreHeight: 0.62, coreWidth: 0.44, topY: 0.08, topDiameter: 0.8 },
   /** 段差の外周（半径20）からはみ出さない大きさ */
   pool: { diameter: 3.8 },
 } as const;
@@ -63,6 +64,13 @@ float fireFlicker(float t, float p) {
 }
 `;
 
+/**
+ * 真上から見たとき用の水平の炎が現れ始める・完全に現れる、カメラの見下ろしの度合い
+ * （炎からカメラへの向きの上下成分。0.6 ≒ 37°、0.9 ≒ 64° 見下ろし）。
+ * 正面（約15°）・斜め（約30°）・近景の視点では 0 なので、通常の見た目は変わらない。
+ */
+export const FLAME_TOP_FADE = { start: 0.6, end: 0.9 } as const;
+
 const FLAME_VERTEX = /* glsl */ `
 attribute float aPhase;
 attribute float aLayer;
@@ -71,22 +79,32 @@ varying vec2 vUv;
 varying float vPhase;
 varying float vLayer;
 varying float vFlicker;
+varying float vTopFade;
 ${FLICKER_GLSL}
 void main() {
   // 1基の中心（火皿の上）。炎の板は縦軸のまわりだけ回してカメラへ向ける
   vec4 center = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-  vec3 toCam = cameraPosition - center.xyz;
+  vec3 toCamFull = cameraPosition - center.xyz;
+  vec3 toCam = toCamFull;
   toCam.y = 0.0;
   float len = length(toCam);
   vec3 forward = len > 1e-4 ? toCam / len : vec3(0.0, 0.0, 1.0);
   vec3 right = vec3(forward.z, 0.0, -forward.x);
   vFlicker = fireFlicker(uTime, aPhase);
-  // 炎の高さも少しだけ揺らす（灯りと同じ揺らぎ）
-  float h = mix(0.92, 1.06, (vFlicker - 0.7) / 0.3);
-  vec3 pos = center.xyz + right * position.x + vec3(0.0, position.y * h, 0.0) + forward * (0.02 * aLayer);
   vUv = uv;
   vPhase = aPhase;
   vLayer = aLayer;
+  vTopFade = 0.0;
+  vec3 pos;
+  if (aLayer > 1.5) {
+    // 水平の炎（真上から見たとき用）：見下ろすほど現れる。現れない視点では面積0にして描画の負荷をなくす
+    vTopFade = smoothstep(${FLAME_TOP_FADE.start.toFixed(2)}, ${FLAME_TOP_FADE.end.toFixed(2)}, toCamFull.y / max(length(toCamFull), 1e-4));
+    pos = center.xyz + (vTopFade > 0.0 ? position : vec3(0.0));
+  } else {
+    // 炎の高さも少しだけ揺らす（灯りと同じ揺らぎ）
+    float h = mix(0.92, 1.06, (vFlicker - 0.7) / 0.3);
+    pos = center.xyz + right * position.x + vec3(0.0, position.y * h, 0.0) + forward * (0.02 * aLayer);
+  }
   gl_Position = projectionMatrix * viewMatrix * vec4(pos, 1.0);
 }
 `;
@@ -98,6 +116,7 @@ varying vec2 vUv;
 varying float vPhase;
 varying float vLayer;
 varying float vFlicker;
+varying float vTopFade;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -107,10 +126,27 @@ float vnoise(vec2 p) {
   return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
+vec3 outerColor(float y) { return mix(vec3(1.0, 0.42, 0.07), vec3(0.75, 0.1, 0.02), y) * 1.25; }
+vec3 coreColor(float y) { return mix(vec3(1.0, 0.86, 0.5), vec3(1.0, 0.55, 0.12), y) * 2.3; }
+
 void main() {
+  float t = mod(uTime, 1000.0);
+  if (vLayer > 1.5) {
+    // 水平の炎：中心が芯の色、外へ行くほど縦の炎の上の方の色。縁は揺らぎで炎の舌のように出入りする
+    vec2 p = vUv * 2.0 - 1.0;
+    float r = length(p);
+    vec2 q = p * 2.4 + vec2(vPhase * 3.1 + sin(t * 1.3 + vPhase) * 0.6, vPhase * 5.3 - t * 1.9);
+    float n = vnoise(q);
+    if (uOctaves > 1.5) n = n * 0.65 + vnoise(q * 2.3 + 7.1) * 0.35;
+    float edge = 0.55 + 0.4 * n;
+    float m = 1.0 - smoothstep(edge * 0.45, edge, r);
+    float k = smoothstep(0.0, 0.85, r / max(edge, 1e-3));
+    vec3 col = mix(coreColor(0.2), outerColor(0.6), k);
+    gl_FragColor = vec4(col * m * vFlicker * vTopFade, 1.0);
+    return;
+  }
   float y = vUv.y;
   float x = vUv.x * 2.0 - 1.0;
-  float t = mod(uTime, 1000.0);
   // 上へ流れる揺らぎ（芯は速く細かく）
   vec2 q = vec2(x * 1.4 + vPhase * 3.1, y * 2.1 - t * (2.2 + vLayer * 0.8) + vPhase * 5.3);
   float n = vnoise(q);
@@ -122,9 +158,7 @@ void main() {
   float top = 1.0 - smoothstep(0.45, 1.0, y + (n - 0.5) * 0.45);
   float bottom = smoothstep(0.0, 0.14, y);
   float m = body * top * bottom;
-  vec3 outer = mix(vec3(1.0, 0.42, 0.07), vec3(0.75, 0.1, 0.02), y) * 1.25;
-  vec3 core = mix(vec3(1.0, 0.86, 0.5), vec3(1.0, 0.55, 0.12), y) * 2.3;
-  vec3 col = mix(outer, core, vLayer);
+  vec3 col = mix(outerColor(y), coreColor(y), vLayer);
   // 加算合成（明るい部分は高画質の Bloom でにじむ）
   gl_FragColor = vec4(col * m * vFlicker, 1.0);
 }
@@ -219,7 +253,7 @@ export function createBrazierBowlGeometry(): BufferGeometry {
   );
 }
 
-/** 炎の板（外側の層・芯の層）。x は幅、y は高さ（板の下端が y=0）。aLayer で層を区別する */
+/** 炎の板（外側の層・芯の層：x は幅、y は高さ、板の下端が y=0）と、真上から見たとき用の水平の板。aLayer で区別する（0・1・2） */
 export function createFlameGeometry(): BufferGeometry {
   const F = BRAZIER_PARTS.flame;
   const layer = (w: number, h: number, value: number) => {
@@ -228,7 +262,12 @@ export function createFlameGeometry(): BufferGeometry {
     g.setAttribute('aLayer', new BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(value), 1));
     return g;
   };
-  return mergeOrThrow([layer(F.width, F.height, 0), layer(F.coreWidth, F.coreHeight, 1)], '炎');
+  // 真上から見たとき用の水平の炎（aLayer = 2）：火皿の口の少し上
+  const top = new PlaneGeometry(F.topDiameter, F.topDiameter);
+  top.rotateX(-Math.PI / 2);
+  top.translate(0, F.topY, 0);
+  top.setAttribute('aLayer', new BufferAttribute(new Float32Array(top.getAttribute('position').count).fill(2), 1));
+  return mergeOrThrow([layer(F.width, F.height, 0), layer(F.coreWidth, F.coreHeight, 1), top], '炎');
 }
 
 /** 光の円盤（炭・足元の光だまり）。aStrength が 1 を超えるものは炭として描く */

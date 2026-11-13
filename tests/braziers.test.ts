@@ -7,6 +7,8 @@ import {
   Braziers,
   createBrazierBowlGeometry,
   createBrazierStandGeometry,
+  createFlameGeometry,
+  FLAME_TOP_FADE,
   fireDetailFor,
 } from '../src/stage/stages/colosseum/braziers';
 import { PRESET_LEVELS, settingsForLevel } from '../src/platform/QualitySettings';
@@ -98,5 +100,33 @@ describe('かがり火（A2-2）', () => {
     expect(b.timeValue).toBeCloseTo(1 / 60, 9);
     for (let i = 0; i < 4000; i++) b.update(1);
     expect(b.timeValue).toBeLessThan(3600);
+  });
+
+  it('炎：縦の2層（外側・芯）と、真上から見たとき用の水平の板（火皿の口の内側に収まる）', () => {
+    const geo = createFlameGeometry();
+    const layer = geo.getAttribute('aLayer');
+    const pos = geo.getAttribute('position');
+    const F = BRAZIER_PARTS.flame;
+    const counts = [0, 0, 0];
+    for (let i = 0; i < layer.count; i++) {
+      const l = layer.getX(i);
+      counts[l]!++;
+      if (l === 2) {
+        expect(pos.getY(i)).toBeCloseTo(F.topY, 6); // 水平
+        expect(Math.abs(pos.getX(i))).toBeLessThanOrEqual(F.topDiameter / 2 + 1e-6);
+      }
+    }
+    expect(counts).toEqual([4, 4, 4]);
+    // 水平の板は火皿の口（上端 1.30）より上、口の直径より小さい
+    expect(F.base + F.topY).toBeGreaterThan(BRAZIER_PARTS.coal.y);
+    expect(F.topDiameter).toBeLessThan(BRAZIER_PARTS.bowl.rimDiameter);
+  });
+
+  it('水平の炎は、正面（15°）・斜めの視点では現れず、真上に近いほど現れる', () => {
+    const sin = (deg: number) => Math.sin((deg * Math.PI) / 180);
+    expect(sin(15)).toBeLessThan(FLAME_TOP_FADE.start);
+    expect(sin(32)).toBeLessThan(FLAME_TOP_FADE.start); // 斜めの全景（中心から約31°見下ろし）
+    expect(sin(90)).toBeGreaterThan(FLAME_TOP_FADE.end);
+    expect(FLAME_TOP_FADE.end - FLAME_TOP_FADE.start).toBeGreaterThanOrEqual(0.25); // なめらかに切り替える幅
   });
 });
