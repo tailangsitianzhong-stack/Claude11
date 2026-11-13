@@ -13,6 +13,8 @@ import type {
   StageViewData,
 } from '../../StageDefinition';
 import { buildArena } from './buildArena';
+import { buildPillars } from './buildPillars';
+import { buildRim } from './buildRim';
 import { createFloorMaterials, FLOOR_SHADER_MARKER, type FloorMaterialSet } from './floorMaterial';
 import { BUILT_OVERVIEW, COLOSSEUM, generateFloorRings } from './layout';
 import { ArenaLights, createEnvironmentMap } from './lighting';
@@ -25,8 +27,8 @@ const HEMI_INTENSITY = 0.9;
 const HEMI_INTENSITY_WITHOUT_ENV = 1.15;
 
 /**
- * Dusk Colosseum（A2-1：床・台座・基本の照明・環境マップ・大きさの目安）。
- * 柱・外周（A2-2）、観客席・背景（A2-3）は後の工程で追加する。
+ * Dusk Colosseum（A2-1：床・台座・基本の照明・環境マップ・大きさの目安。A2-2：外周・柱）。
+ * かがり火（A2-2 の CP2）、観客席・背景（A2-3）は後の工程で追加する。
  */
 export class ColosseumStage implements StageInstance {
   readonly id = 'dusk-colosseum';
@@ -54,6 +56,8 @@ export class ColosseumStage implements StageInstance {
   };
 
   private readonly floor: Mesh;
+  /** 画質で影の有無を切り替えるステージの物（柱・外周の壁） */
+  private readonly stageShadowCasters: Mesh[];
   private readonly floorMaterials: FloorMaterialSet;
   private readonly noise = createNoiseTexture();
   private envTarget: WebGLRenderTarget | null = null;
@@ -76,6 +80,10 @@ export class ColosseumStage implements StageInstance {
     const arena = buildArena(this.floorMaterials.patterned);
     this.floor = arena.floor;
     scene.add(arena.floor, arena.platformSide, arena.outerGround);
+    const rim = buildRim();
+    const pillars = buildPillars();
+    scene.add(rim.wall, rim.cap, rim.terrace, pillars.stone, pillars.bands);
+    this.stageShadowCasters = [rim.wall, rim.cap, pillars.stone, pillars.bands];
 
     // 模様のシェーダーのコンパイルに失敗したら、単色の床に切り替える（エラーは ShaderErrorMonitor が出力済み）
     this.unregisterShaderHandler = context.shaderErrors.onFailure(FLOOR_SHADER_MARKER, () =>
@@ -114,6 +122,8 @@ export class ColosseumStage implements StageInstance {
 
   applyQuality(s: Readonly<QualityLevelSettings>): void {
     this.lights.applyQuality(s);
+    // 低画質（段階6以降）では柱・壁の影を落とさない（設計書 1-3：影はキャラクターのみ）
+    for (const m of this.stageShadowCasters) m.castShadow = s.stageShadows;
     // 低画質（背景の密度を下げる段階以降）では、床の細かな質感のノイズを省く
     this.floorMaterials.setDetail(s.backgroundDensity === 'full');
   }
