@@ -37,12 +37,36 @@ export interface StageViewData {
   minCameraHeight: number;
 }
 
+/** 太陽の向き（開発用の調整項目） */
+export interface StageDevSunAngles {
+  elevationDeg: number;
+  azimuthDeg: number;
+}
+
+/**
+ * 開発用の項目（省略可能）。統計表示・開発パネル・URL のデバッグ指定から使う。ゲームの処理からは使わない。
+ */
+export interface StageDevHooks {
+  /** 統計表示に出す注意書き（床・環境マップなどの描画方式を切り替えたときの理由） */
+  notes(): string[];
+  /** 開発パネルなどからの確認・調整 */
+  controls: {
+    getSun(): StageDevSunAngles;
+    setSun(angles: StageDevSunAngles): void;
+    setScaleReferenceVisible(visible: boolean): void;
+    /** 床の描画方式（表示用の文） */
+    floorMode(): string;
+  };
+}
+
 export interface StageInstance {
   readonly id: string;
   readonly name: string;
   readonly scene: Scene;
   readonly gameplay: StageGameplayData;
   readonly view: StageViewData;
+  /** 開発用の項目（持たないステージもある） */
+  readonly dev?: StageDevHooks;
   /** 固定間隔のゲーム処理から呼ぶ（演出用のアニメーション） */
   update(dt: number): void;
   applyQuality(settings: Readonly<QualityLevelSettings>): void;

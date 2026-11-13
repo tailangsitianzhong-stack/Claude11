@@ -109,4 +109,17 @@ describe('StageManager', () => {
       'release1', 'regen1', 'release1', 'regen1', 'release1', 'regen1',
     ]);
   });
+
+  it('開発用の項目（dev）を持たないステージも読み込み・更新・破棄でき、注意書きは空になる', () => {
+    const p = fakePipeline();
+    const log: string[] = [];
+    const m = new StageManager(ctx, p, settingsForLevel(0));
+    m.load(fakeDefinition(log));
+    expect(m.current?.dev).toBeUndefined();
+    // Game.stageNotes() と同じ取り出し方
+    expect(m.current?.dev?.notes() ?? []).toEqual([]);
+    m.update(1 / 60);
+    m.dispose();
+    expect(log).toEqual([`quality1:${settingsForLevel(0).shadowMapSize}`, 'update1', 'dispose1']);
+  });
 });

@@ -1,10 +1,17 @@
 import { Color, Fog, Scene, Vector3, type InstancedMesh, type Mesh, type WebGLRenderTarget } from 'three';
 import type { QualityLevelSettings } from '../../../platform/QualitySettings';
 import { canRenderToHalfFloat } from '../../../render/capabilities';
-import { disposeMaterial } from '../../../render/gpuResources';
+import { releaseSceneGpuResources } from '../../../render/gpuResources';
 import { createNoiseTexture } from '../../../render/textures/noiseTexture';
 import { createScaleReference } from '../../../debug/ScaleReference';
-import type { StageContext, StageDefinition, StageGameplayData, StageInstance, StageViewData } from '../../StageDefinition';
+import type {
+  StageContext,
+  StageDefinition,
+  StageDevHooks,
+  StageGameplayData,
+  StageInstance,
+  StageViewData,
+} from '../../StageDefinition';
 import { buildArena } from './buildArena';
 import { createFloorMaterials, FLOOR_SHADER_MARKER, type FloorMaterialSet } from './floorMaterial';
 import { BUILT_OVERVIEW, COLOSSEUM, generateFloorRings } from './layout';
@@ -29,6 +36,22 @@ export class ColosseumStage implements StageInstance {
   readonly view: StageViewData;
   readonly lights: ArenaLights;
   readonly scaleReference: InstancedMesh;
+  readonly dev: StageDevHooks = {
+    notes: () => {
+      const notes: string[] = [];
+      if (this.floorFallbackReason) notes.push(`床: 単色（${this.floorFallbackReason}）`);
+      if (this.environmentNote) notes.push(`環境マップ: なし（${this.environmentNote}）`);
+      return notes;
+    },
+    controls: {
+      getSun: () => this.lights.sunAngles,
+      setSun: (angles) => this.lights.setSun(angles),
+      setScaleReferenceVisible: (visible) => {
+        this.scaleReference.visible = visible;
+      },
+      floorMode: () => (this.floorModeValue === 'patterned' ? '石畳の模様（シェーダー）' : '単色（代わりの床）'),
+    },
+  };
 
   private readonly floor: Mesh;
   private readonly floorMaterials: FloorMaterialSet;
@@ -85,15 +108,6 @@ export class ColosseumStage implements StageInstance {
     return this.floorModeValue;
   }
 
-  get floorFallbackNote(): string | null {
-    return this.floorFallbackReason;
-  }
-
-  /** 環境マップを使えない場合の理由（使えていれば null） */
-  get environmentFallbackNote(): string | null {
-    return this.environmentNote;
-  }
-
   update(_dt: number): void {
     // A2-1 では動くものはない（A2-2 のかがり火の揺らぎなどをここで更新する）
   }
@@ -125,20 +139,10 @@ export class ColosseumStage implements StageInstance {
     if (this.disposed) return;
     this.disposed = true;
     this.unregisterShaderHandler();
-    this.envTarget?.dispose();
-    this.envTarget = null;
-    this.scene.environment = null;
-    this.scene.traverse((obj) => {
-      const mesh = obj as Mesh;
-      if (mesh.isMesh) {
-        mesh.geometry.dispose();
-        if (Array.isArray(mesh.material)) mesh.material.forEach(disposeMaterial);
-        else disposeMaterial(mesh.material);
-      }
-    });
-    this.floorMaterials.dispose();
-    this.noise.dispose();
-    this.lights.sun.shadow.map?.dispose();
+    // ステージが所有し、シーンの走査では見つからない資源（環境マップ・ノイズ・使っていない方の床のマテリアル）
+    this.releaseGpuResources();
+    // シーン内の資源（ジオメトリ・マテリアル・InstancedMesh・影マップ）はコンテキスト喪失時と同じ共通の処理で解放する
+    releaseSceneGpuResources(this.scene);
   }
 
   /** 環境マップを作る（作り直す場合は古いものを先に解放する） */

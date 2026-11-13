@@ -1,4 +1,4 @@
-import type { LightShadow, Material, Object3D, Texture } from 'three';
+import type { InstancedMesh, LightShadow, Material, Object3D, Texture } from 'three';
 
 /**
  * WebGL コンテキスト喪失時の GPU 資源の解放。
@@ -25,9 +25,18 @@ export function disposeMaterial(material: Material): void {
   material.dispose();
 }
 
-/** シーン内の GPU 資源（ジオメトリ・マテリアル・テクスチャ・影マップ）を解放する */
+/**
+ * シーン内の GPU 資源（ジオメトリ・マテリアル・テクスチャ・影マップ・InstancedMesh のインスタンス用バッファ）を解放する。
+ * 何度呼んでもよい（dispose 済みの資源の dispose は何もしない）。解放後も、次の描画で作り直されて使える。
+ */
 export function releaseSceneGpuResources(root: Object3D): void {
   root.traverse((obj) => {
+    // InstancedMesh のインスタンスごとの行列・色のバッファは、ジオメトリとは別に three.js が GPU に持っている。
+    // InstancedMesh.dispose() で three.js の内部の結び付きを外し、バッファを解放する
+    // （行列・色のデータ自体は残るので、次の描画でアップロードし直される）。
+    // 注意：モーフ用テクスチャ（morphTexture）は dispose() で null になるため、モーフを使う InstancedMesh は所有者が作り直すこと。
+    if ((obj as InstancedMesh).isInstancedMesh) (obj as InstancedMesh).dispose();
+
     const mesh = obj as Object3D & { geometry?: { dispose(): void }; material?: Material | Material[] };
     mesh.geometry?.dispose();
     if (Array.isArray(mesh.material)) mesh.material.forEach(disposeMaterial);
