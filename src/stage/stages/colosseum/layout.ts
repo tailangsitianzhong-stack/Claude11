@@ -33,6 +33,8 @@ export const COLOSSEUM = {
   pillarDiameter: 1.1,
   /** 柱の並びの開始角（正面 +Z の真ん中に柱が来ないよう、間隔の半分ずらす） */
   pillarAngleOffsetDeg: 15,
+  /** かがり火（A2-2）：柱と同じ円周上、柱の間に1つおき（6基・60°おき） */
+  brazierCount: 6,
   /** 観客席（A2-3） */
   standsInnerRadius: 24,
   standsOuterRadius: 36,
@@ -53,6 +55,22 @@ export const BUILT_OVERVIEW = {
   centerY: 3,
   radius: 20.6,
 } as const;
+
+/**
+ * かがり火の位置（上から見た x, z）。柱の角度を基準に、隣り合う柱のちょうど中間（+15°）に、
+ * 柱の間1つおきに置く（30°, 90°, …, 330°）。半径は柱と同じ。
+ */
+export function brazierPositions(): [number, number][] {
+  const C = COLOSSEUM;
+  const pillarStep = 360 / C.pillarCount;
+  const out: [number, number][] = [];
+  for (let i = 0; i < C.brazierCount; i++) {
+    const deg = C.pillarAngleOffsetDeg + pillarStep / 2 + pillarStep * 2 * i;
+    const a = (deg * Math.PI) / 180;
+    out.push([Math.sin(a) * C.pillarRingRadius, Math.cos(a) * C.pillarRingRadius]);
+  }
+  return out;
+}
 
 /** 柱の中心の位置（上から見た x, z）。正確に等間隔 */
 export function pillarPositions(): [number, number][] {
