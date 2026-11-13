@@ -102,7 +102,7 @@ describe('かがり火（A2-2）', () => {
     expect(b.timeValue).toBeLessThan(3600);
   });
 
-  it('炎：縦の2層（外側・芯）と、真上から見たとき用の水平の板（火皿の口の内側に収まる）', () => {
+  it('炎：縦の2層（外側・芯）と、真上から見たとき用の水平の板（火皿の口より上、光だまりより小さい）', () => {
     const geo = createFlameGeometry();
     const layer = geo.getAttribute('aLayer');
     const pos = geo.getAttribute('position');
@@ -117,9 +117,11 @@ describe('かがり火（A2-2）', () => {
       }
     }
     expect(counts).toEqual([4, 4, 4]);
-    // 水平の板は火皿の口（上端 1.30）より上、口の直径より小さい
-    expect(F.base + F.topY).toBeGreaterThan(BRAZIER_PARTS.coal.y);
-    expect(F.topDiameter).toBeLessThan(BRAZIER_PARTS.bowl.rimDiameter);
+    // 水平の板は火皿の口（上端 1.30）より上で、縦の炎の高さの範囲内
+    const bowlTop = BRAZIER_PARTS.plinth.height + BRAZIER_PARTS.column.height + BRAZIER_PARTS.collar.height + BRAZIER_PARTS.bowl.height;
+    expect(F.base + F.topY).toBeGreaterThan(bowlTop);
+    expect(F.topY).toBeLessThan(F.height);
+    expect(F.topDiameter).toBeLessThan(BRAZIER_PARTS.pool.diameter);
   });
 
   it('水平の炎は、正面（15°）・斜めの視点では現れず、真上に近いほど現れる', () => {

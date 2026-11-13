@@ -33,7 +33,7 @@ import { MATERIAL, PALETTE } from './palette';
  *   火皿     0.98  〜 1.30  口の直径 0.96（ブロンズ）
  *   炭       1.25           直径 0.84（光る円盤）
  *   炎       1.20  〜 2.20  幅 0.80（外側）／ 0.44（芯）、常にカメラの方を向く板
- *            ＋ 真上から見たとき用の水平の炎（1.28、直径 0.80。真上に近い視点でだけ現れる）
+ *            ＋ 真上から見たとき用の水平の炎（1.50、火皿の口より上。炎の舌は直径 1.3m まで。真上に近い視点でだけ現れる）
  *   光だまり 段差の上        直径 3.8
  */
 export const BRAZIER_PARTS = {
@@ -42,7 +42,7 @@ export const BRAZIER_PARTS = {
   collar: { height: 0.06, diameter: 0.48 },
   bowl: { height: 0.32, rimDiameter: 0.96 },
   coal: { y: 1.25, diameter: 0.84 },
-  flame: { base: 1.2, height: 1.0, width: 0.8, coreHeight: 0.62, coreWidth: 0.44, topY: 0.08, topDiameter: 0.8 },
+  flame: { base: 1.2, height: 1.0, width: 0.8, coreHeight: 0.62, coreWidth: 0.44, topY: 0.3, topDiameter: 1.3 },
   /** 段差の外周（半径20）からはみ出さない大きさ */
   pool: { diameter: 3.8 },
 } as const;
@@ -133,16 +133,20 @@ vec3 coreColor(float y) { return mix(vec3(1.0, 0.86, 0.5), vec3(1.0, 0.55, 0.12)
 void main() {
   float t = mod(uTime, 1000.0);
   if (vLayer > 1.5) {
-    // 水平の炎：中心が芯の色、外へ行くほど縦の炎の上の方の色。縁は揺らぎで炎の舌のように出入りする
+    // 水平の炎（上から見た炎）：明るい芯から、炎の舌が外へ伸びて揺れる。中心は縦の炎の芯の色、外は上の方の色
     vec2 p = vUv * 2.0 - 1.0;
     float r = length(p);
-    vec2 q = p * 2.4 + vec2(vPhase * 3.1 + sin(t * 1.3 + vPhase) * 0.6, vPhase * 5.3 - t * 1.9);
+    vec2 dir = r > 1e-4 ? p / r : vec2(1.0, 0.0);
+    // 向きごとの舌の長さ（向きの単位ベクトルからノイズを読むので継ぎ目が出ない）と、外へ流れる揺らぎ
+    float tongue = vnoise(dir * 2.6 + vec2(vPhase * 3.1 + t * 0.9, vPhase * 5.3 - t * 0.7));
+    vec2 q = p * 3.0 - dir * t * 2.2 + vPhase * 4.0;
     float n = vnoise(q);
     if (uOctaves > 1.5) n = n * 0.65 + vnoise(q * 2.3 + 7.1) * 0.35;
-    float edge = 0.55 + 0.4 * n;
-    float m = 1.0 - smoothstep(edge * 0.45, edge, r);
-    float k = smoothstep(0.0, 0.85, r / max(edge, 1e-3));
-    vec3 col = mix(coreColor(0.2), outerColor(0.6), k);
+    // 舌の先は火皿の縁（半径 0.48m ≒ 0.74）より外まで伸び、縁の外に赤い炎が揺れて見える
+    float edge = 0.42 + 0.58 * pow(tongue, 1.4) * (0.55 + 0.45 * n) + 0.08 * (vFlicker - 0.83) / 0.17;
+    float m = 1.0 - smoothstep(edge * 0.55, edge, r);
+    float k = clamp(r / max(edge, 1e-3), 0.0, 1.0);
+    vec3 col = mix(coreColor(0.0) * 1.2, outerColor(0.85) * 1.3, smoothstep(0.2, 0.85, k));
     gl_FragColor = vec4(col * m * vFlicker * vTopFade, 1.0);
     return;
   }
@@ -263,7 +267,7 @@ export function createFlameGeometry(): BufferGeometry {
     g.setAttribute('aLayer', new BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(value), 1));
     return g;
   };
-  // 真上から見たとき用の水平の炎（aLayer = 2）：火皿の口の少し上
+  // 真上から見たとき用の水平の炎（aLayer = 2）：火皿の口（縁）より上に置き、縁に隠れないようにする
   const top = new PlaneGeometry(F.topDiameter, F.topDiameter);
   top.rotateX(-Math.PI / 2);
   top.translate(0, F.topY, 0);
