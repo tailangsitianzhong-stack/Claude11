@@ -66,10 +66,11 @@ float fireFlicker(float t, float p) {
 
 /**
  * 真上から見たとき用の水平の炎が現れ始める・完全に現れる、カメラの見下ろしの度合い
- * （炎からカメラへの向きの上下成分。0.6 ≒ 37°、0.9 ≒ 64° 見下ろし）。
- * 正面（約15°）・斜め（約30°）・近景の視点では 0 なので、通常の見た目は変わらない。
+ * （炎からカメラへの向きの上下成分。0.75 ≒ 49°、0.95 ≒ 72° 見下ろし）。
+ * 正面・斜め（手前のかがり火でも約46°）・近景の視点では 0 なので、通常の見た目は変わらない。
+ * 縦の炎は見下ろすほど短く見える（72° で約3割）ので、その間に水平の炎へなめらかに移る。
  */
-export const FLAME_TOP_FADE = { start: 0.6, end: 0.9 } as const;
+export const FLAME_TOP_FADE = { start: 0.75, end: 0.95 } as const;
 
 const FLAME_VERTEX = /* glsl */ `
 attribute float aPhase;

@@ -125,8 +125,9 @@ describe('かがり火（A2-2）', () => {
   it('水平の炎は、正面（15°）・斜めの視点では現れず、真上に近いほど現れる', () => {
     const sin = (deg: number) => Math.sin((deg * Math.PI) / 180);
     expect(sin(15)).toBeLessThan(FLAME_TOP_FADE.start);
-    expect(sin(32)).toBeLessThan(FLAME_TOP_FADE.start); // 斜めの全景（中心から約31°見下ろし）
+    // 斜めの全景で最も見下ろす手前のかがり火（約46°）でも現れない
+    expect(sin(46)).toBeLessThan(FLAME_TOP_FADE.start);
     expect(sin(90)).toBeGreaterThan(FLAME_TOP_FADE.end);
-    expect(FLAME_TOP_FADE.end - FLAME_TOP_FADE.start).toBeGreaterThanOrEqual(0.25); // なめらかに切り替える幅
+    expect(FLAME_TOP_FADE.end - FLAME_TOP_FADE.start).toBeGreaterThanOrEqual(0.2 - 1e-9); // なめらかに切り替える幅（約23°）
   });
 });
