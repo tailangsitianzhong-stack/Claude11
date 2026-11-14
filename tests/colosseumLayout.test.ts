@@ -163,3 +163,53 @@ describe('外周と柱（A2-2）', () => {
     }
   });
 });
+
+describe('観客席・外壁（A2-3 CP1）', async () => {
+  const { STANDS_ROW_DEPTH, STANDS_TOP_Y, archBayAngleDeg } = await import('../src/stage/stages/colosseum/layout');
+  const { buildStands, standsProfile } = await import('../src/stage/stages/colosseum/buildStands');
+  const { buildOuterWall } = await import('../src/stage/stages/colosseum/buildOuterWall');
+  const C = COLOSSEUM;
+
+  it('観客席は半径24〜36（14段、1段の奥行き約0.81m・高さ0.33m）、最上段の奥は外壁の内側の面まで', () => {
+    const prof = standsProfile();
+    const rs = prof.map(([r]) => r);
+    expect(Math.min(...rs)).toBeCloseTo(C.standsInnerRadius, 9);
+    expect(Math.max(...rs)).toBeCloseTo(C.outerWallInnerRadius, 9);
+    // 最上段の段の奥は standsOuterRadius
+    expect(C.standsInnerRadius + C.standsPodiumLedge + STANDS_ROW_DEPTH * C.standsRowCount).toBeCloseTo(C.standsOuterRadius, 9);
+    expect(STANDS_ROW_DEPTH).toBeGreaterThan(0.75);
+    expect(STANDS_ROW_DEPTH).toBeLessThan(0.9);
+    expect(STANDS_TOP_Y).toBeCloseTo(6.62, 9);
+    // 観客席は柱・かがり火の段差（半径20）の外
+    expect(C.standsInnerRadius).toBeGreaterThan(C.terraceOuterRadius);
+  });
+
+  it('外壁は半径37〜38・高さ12。アーチの回廊は頂点の上に上端まで 1m 以上、開口の高さは 4m 以上', () => {
+    const wall = buildOuterWall();
+    expect(wall.isInstancedMesh).toBe(true);
+    expect(wall.count).toBe(36);
+    const b = new Box3().setFromObject(wall);
+    expect(b.max.y).toBeCloseTo(C.outerWallHeight, 6);
+    expect(b.min.y).toBeCloseTo(-C.platformHeight, 6);
+    expect(Math.max(b.max.x, b.max.z, -b.min.x, -b.min.z)).toBeLessThanOrEqual(C.outerWallRadius + 0.13); // 蛇腹の張り出しを含む
+    const apex = STANDS_TOP_Y + C.arcadeSpringHeight + C.arcadeOpeningWidth / 2;
+    expect(apex - STANDS_TOP_Y).toBeGreaterThanOrEqual(4);
+    expect(C.outerWallHeight - apex).toBeGreaterThanOrEqual(1);
+  });
+
+  it('アーチの区画は36（10°ごと）、正面（+Z）の真ん中がアーチ', () => {
+    expect(archBayAngleDeg(0)).toBe(0);
+    expect(archBayAngleDeg(1)).toBe(10);
+    expect(C.archBayCount).toBe(36);
+  });
+
+  it('全景の基準は中心の高さ4・半径40で、観客席・外壁を包む', () => {
+    expect(BUILT_OVERVIEW.centerY).toBe(4);
+    expect(BUILT_OVERVIEW.radius).toBe(40);
+    for (const obj of [buildStands(), buildOuterWall()]) {
+      const b = new Box3().setFromObject(obj);
+      const r = Math.max(b.max.x, b.max.z, -b.min.x, -b.min.z);
+      for (const y of [b.min.y, b.max.y]) expect(Math.hypot(r, y - BUILT_OVERVIEW.centerY)).toBeLessThanOrEqual(BUILT_OVERVIEW.radius);
+    }
+  });
+});

@@ -1,17 +1,4 @@
-import {
-  BackSide,
-  Color,
-  DirectionalLight,
-  HemisphereLight,
-  Mesh,
-  PMREMGenerator,
-  Scene,
-  ShaderMaterial,
-  SphereGeometry,
-  Vector3,
-  type WebGLRenderTarget,
-  type WebGLRenderer,
-} from 'three';
+import { DirectionalLight, HemisphereLight, Scene, Vector3 } from 'three';
 import type { QualityLevelSettings } from '../../../platform/QualitySettings';
 import { applyShadowQuality } from '../../../render/shadows';
 import { PALETTE } from './palette';
@@ -82,51 +69,4 @@ export class ArenaLights {
   applyQuality(s: Readonly<QualityLevelSettings>): void {
     applyShadowQuality(this.sun, s);
   }
-}
-
-/**
- * 環境マップ（PMREM）。夕暮れの空のグラデーションを一度だけ描いて作る（ブロンズの映り込みと環境光）。
- * GPU 上で描いて作るため、コンテキスト復帰時には作り直しが必要（ColosseumStage.regenerateGpuResources）。
- * A2-3 で空のドームを作ったら、そのシェーダーを共有する予定。
- */
-export function createEnvironmentMap(renderer: WebGLRenderer): WebGLRenderTarget {
-  const S = PALETTE.envSky;
-  const scene = new Scene();
-  const material = new ShaderMaterial({
-    side: BackSide,
-    depthWrite: false,
-    uniforms: {
-      uZenith: { value: new Color(S.zenith) },
-      uHorizon: { value: new Color(S.horizon) },
-      uGround: { value: new Color(S.ground) },
-    },
-    vertexShader: /* glsl */ `
-      varying vec3 vDir;
-      void main() {
-        vDir = normalize(position);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uZenith;
-      uniform vec3 uHorizon;
-      uniform vec3 uGround;
-      varying vec3 vDir;
-      void main() {
-        float y = normalize(vDir).y;
-        vec3 sky = mix(uHorizon, uZenith, smoothstep(0.0, 0.6, y));
-        vec3 col = y >= 0.0 ? sky : mix(uHorizon, uGround, smoothstep(0.0, 0.25, -y));
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-  });
-  const geometry = new SphereGeometry(50, 32, 16);
-  scene.add(new Mesh(geometry, material));
-
-  const pmrem = new PMREMGenerator(renderer);
-  const target = pmrem.fromScene(scene, 0.02);
-  // 生成器と、生成に使った一時的な資源はすぐに解放する（残すのは結果の RenderTarget だけ）
-  pmrem.dispose();
-  geometry.dispose();
-  material.dispose();
-  target.texture.name = 'ColosseumEnvironment';
-  return target;
 }
