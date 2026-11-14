@@ -35,12 +35,27 @@ export const COLOSSEUM = {
   pillarAngleOffsetDeg: 15,
   /** かがり火（A2-2）：柱と同じ円周上、柱の間に1つおき（6基・60°おき） */
   brazierCount: 6,
-  /** 観客席（A2-3） */
+  /** 観客席（A2-3）：最前列の手すり壁の面から、最上段の奥まで */
   standsInnerRadius: 24,
   standsOuterRadius: 36,
-  /** 外壁（A2-3） */
+  /** 最前列の手すり壁（観客席の土台）の上面の高さ（床面から。外の地面からは 2.5m）と、その上の通路の奥行き */
+  standsPodiumHeight: 2.0,
+  standsPodiumLedge: 0.6,
+  /** 観客席の段数（1段 = 奥行き約 0.81m・高さ 0.33m） */
+  standsRowCount: 14,
+  standsRowRise: 0.33,
+  /** 外壁（A2-3）：内側の面の半径（最上段の奥からの回廊の床 1m）、外側の面の半径、高さ（床面から） */
+  outerWallInnerRadius: 37,
   outerWallRadius: 38,
   outerWallHeight: 12,
+  /** アーチの区画の数（10°ごと。正面 +Z の真ん中がアーチの中心） */
+  archBayCount: 36,
+  /** 回廊のアーチ（観客席の最上段＝回廊の床から）：開口の幅、柱脚からアーチの付け根までの高さ */
+  arcadeOpeningWidth: 3.4,
+  arcadeSpringHeight: 2.6,
+  /** 外側の面の下の層の、浅いアーチ（くぼみ）の付け根の高さ（外の地面から）とくぼみの深さ */
+  blindArchSpringHeight: 3.9,
+  blindArchDepth: 0.3,
   /** 外壁まで含めたステージ全体を包む球（A2-3 で観客席・外壁を作った後の全景の基準） */
   fullOverviewCenterY: 4,
   fullOverviewRadius: 40,
@@ -49,12 +64,24 @@ export const COLOSSEUM = {
 /**
  * 確認用カメラの全景の基準（作成済みの部分を包む球）。
  * 工程が進むと広がる：A2-1 はアリーナ（半径16）＋余白、A2-2 は段差の外周（半径20）と柱の頂上（高さ約7.3）まで、
- * A2-3 以降は外壁まで（半径40）。包む範囲はテスト（colosseumLayout.test.ts）で確かめる。
+ * A2-3 以降は外壁まで（中心の高さ4・半径40）。包む範囲はテスト（colosseumLayout.test.ts）で確かめる。
  */
 export const BUILT_OVERVIEW = {
-  centerY: 3,
-  radius: 20.6,
+  centerY: COLOSSEUM.fullOverviewCenterY,
+  radius: COLOSSEUM.fullOverviewRadius,
 } as const;
+
+/** 観客席の最上段＝外壁の回廊の床の高さ（床面から） */
+export const STANDS_TOP_Y = COLOSSEUM.standsPodiumHeight + COLOSSEUM.standsRowCount * COLOSSEUM.standsRowRise;
+
+/** 観客席の1段の奥行き */
+export const STANDS_ROW_DEPTH =
+  (COLOSSEUM.standsOuterRadius - COLOSSEUM.standsInnerRadius - COLOSSEUM.standsPodiumLedge) / COLOSSEUM.standsRowCount;
+
+/** アーチの区画の中心の角度（度）。0° が正面（+Z） */
+export function archBayAngleDeg(i: number): number {
+  return (360 / COLOSSEUM.archBayCount) * i;
+}
 
 /**
  * かがり火の位置（上から見た x, z）。柱の角度を基準に、隣り合う柱のちょうど中間（+15°）に、

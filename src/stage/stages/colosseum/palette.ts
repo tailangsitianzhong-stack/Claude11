@@ -19,6 +19,8 @@ export const PALETTE = {
   rimWall: '#A39276', // 外周の低い壁
   terrace: '#8C7C67', // 外周の段差（柱の並ぶ段）
   pillar: '#C4B496', // 柱（床より少し明るい砂岩）
+  stands: '#9E8D74', // 観客席（アリーナより少し暗く、背景へ沈める）
+  outerWall: '#A99780', // 外壁
   outerGround: '#5A5048',
   scaleReference: '#A9B4C2',
   /** A2-1 の仮の背景（A2-3 で空のドームに置き換える） */

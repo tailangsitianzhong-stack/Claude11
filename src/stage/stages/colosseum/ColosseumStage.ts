@@ -13,9 +13,11 @@ import type {
   StageViewData,
 } from '../../StageDefinition';
 import { buildArena } from './buildArena';
+import { buildOuterWall } from './buildOuterWall';
 import { buildPillars } from './buildPillars';
 import { Braziers, fireDetailFor } from './braziers';
 import { buildRim } from './buildRim';
+import { buildStands } from './buildStands';
 import { createFloorMaterials, FLOOR_SHADER_MARKER, type FloorMaterialSet } from './floorMaterial';
 import { BUILT_OVERVIEW, COLOSSEUM, generateFloorRings } from './layout';
 import { ArenaLights, createEnvironmentMap } from './lighting';
@@ -29,7 +31,7 @@ const HEMI_INTENSITY_WITHOUT_ENV = 1.15;
 
 /**
  * Dusk Colosseum（A2-1：床・台座・基本の照明・環境マップ・大きさの目安。A2-2：外周・柱）。
- * A2-2 の CP2 でかがり火を追加。観客席・背景（A2-3）は後の工程で追加する。
+ * A2-2 の CP2 でかがり火を追加。A2-3：観客席・外壁（CP1）。空・遠景・霧（CP2）、バナー（CP3）は後の工程で追加する。
  */
 export class ColosseumStage implements StageInstance {
   readonly id = 'dusk-colosseum';
@@ -86,6 +88,8 @@ export class ColosseumStage implements StageInstance {
     const pillars = buildPillars();
     scene.add(rim.wall, rim.cap, rim.terrace, pillars.stone, pillars.bands);
     scene.add(...this.braziers.meshes);
+    // 観客席・外壁（A2-3）：影の範囲の外なので、影の切り替え（stageShadowCasters）の対象にしない
+    scene.add(buildStands(), buildOuterWall());
     this.stageShadowCasters = [rim.wall, rim.cap, pillars.stone, pillars.bands, ...this.braziers.shadowCasters];
 
     // 模様のシェーダーのコンパイルに失敗したら、単色の床に切り替える（エラーは ShaderErrorMonitor が出力済み）
