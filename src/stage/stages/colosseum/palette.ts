@@ -23,15 +23,15 @@ export const PALETTE = {
   outerWall: '#A99780', // 外壁
   outerGround: '#5A5048',
   scaleReference: '#A9B4C2',
-  /** A2-1 の仮の背景（A2-3 で空のドームに置き換える） */
-  background: '#3D3757',
-  fog: '#5E4E6A',
+  /** 遠景の影絵（A2-3）。地平線の色へのかすみは farView.ts で重ねる */
+  farView: { hills: '#3E3448', city: '#2C2840' },
   light: {
     sun: '#FFD9B5', // 夕日：赤くなりすぎないよう、暖かい白に寄せる（夕暮れ感は空・背景・補助光で出す）
     hemiSky: '#9AA6D6',
     hemiGround: '#6B5E52',
     fill: '#8FA8FF',
   },
+  /** 空（A2-3 の空のドームと環境マップで共通）。霧の色は地平線の色にそろえる */
   envSky: { zenith: '#2A2E55', horizon: '#E8A070', ground: '#4A3A30' },
 } as const;
 
