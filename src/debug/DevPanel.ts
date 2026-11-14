@@ -1,6 +1,6 @@
 import type GUI from 'lil-gui';
 import type { QualityManager } from '../platform/QualityManager';
-import type { SunAngles } from '../stage/stages/colosseum/lighting';
+import type { StageDevHooks } from '../stage/StageDefinition';
 import { VIEW_PRESET_LABELS, VIEW_PRESETS, type ViewPreset } from './DevCamera';
 import {
   MAX_QUALITY_LEVEL,
@@ -20,12 +20,7 @@ export interface DevPanelOptions {
   /** 確認用カメラ（A2） */
   camera?: { apply(preset: ViewPreset): void };
   /** ステージの確認・調整（A2） */
-  stage?: {
-    getSun(): SunAngles;
-    setSun(angles: SunAngles): void;
-    setScaleReferenceVisible(visible: boolean): void;
-    floorMode(): string;
-  };
+  stage?: StageDevHooks['controls'];
 }
 
 export async function createDevPanel(quality: QualityManager, options: DevPanelOptions): Promise<GUI> {

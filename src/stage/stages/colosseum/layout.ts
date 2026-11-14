@@ -17,11 +17,24 @@ export const COLOSSEUM = {
   emblemRadius: 4,
   /** 位置の目安となる内側の円の半径 */
   accentRingRadius: 10,
-  /** 柱（A2-2） */
+  /** 外周の低い壁（A2-2）：内側の面の半径。外側の面は台座の端（arenaRadius）にそろえる */
+  rimWallInnerRadius: 15.72,
+  /** 低い壁の高さ（床から、ブロンズの縁取りの上端まで） */
+  rimWallHeight: 0.6,
+  /** 壁の上のブロンズの縁取りの厚さ */
+  rimCapThickness: 0.06,
+  /** 外周の段差（柱の並ぶ一段低い石の段）：外側の半径と、床からの下がり */
+  terraceOuterRadius: 20,
+  terraceDrop: 0.25,
+  /** 柱（A2-2）。段差の上に立ち、高さは段差の面から柱頭の上端まで */
   pillarCount: 12,
   pillarRingRadius: 18,
   pillarHeight: 7.5,
   pillarDiameter: 1.1,
+  /** 柱の並びの開始角（正面 +Z の真ん中に柱が来ないよう、間隔の半分ずらす） */
+  pillarAngleOffsetDeg: 15,
+  /** かがり火（A2-2）：柱と同じ円周上、柱の間に1つおき（6基・60°おき） */
+  brazierCount: 6,
   /** 観客席（A2-3） */
   standsInnerRadius: 24,
   standsOuterRadius: 36,
@@ -35,12 +48,40 @@ export const COLOSSEUM = {
 
 /**
  * 確認用カメラの全景の基準（作成済みの部分を包む球）。
- * 工程が進むと広がる：A2-1 はアリーナ（半径16）＋余白、A2-2 は柱（半径18.6）まで、A2-3 以降は外壁まで（半径40）。
+ * 工程が進むと広がる：A2-1 はアリーナ（半径16）＋余白、A2-2 は段差の外周（半径20）と柱の頂上（高さ約7.3）まで、
+ * A2-3 以降は外壁まで（半径40）。包む範囲はテスト（colosseumLayout.test.ts）で確かめる。
  */
 export const BUILT_OVERVIEW = {
-  centerY: 1,
-  radius: COLOSSEUM.arenaRadius + 2,
+  centerY: 3,
+  radius: 20.6,
 } as const;
+
+/**
+ * かがり火の位置（上から見た x, z）。柱の角度を基準に、隣り合う柱のちょうど中間（+15°）に、
+ * 柱の間1つおきに置く（30°, 90°, …, 330°）。半径は柱と同じ。
+ */
+export function brazierPositions(): [number, number][] {
+  const C = COLOSSEUM;
+  const pillarStep = 360 / C.pillarCount;
+  const out: [number, number][] = [];
+  for (let i = 0; i < C.brazierCount; i++) {
+    const deg = C.pillarAngleOffsetDeg + pillarStep / 2 + pillarStep * 2 * i;
+    const a = (deg * Math.PI) / 180;
+    out.push([Math.sin(a) * C.pillarRingRadius, Math.cos(a) * C.pillarRingRadius]);
+  }
+  return out;
+}
+
+/** 柱の中心の位置（上から見た x, z）。正確に等間隔 */
+export function pillarPositions(): [number, number][] {
+  const C = COLOSSEUM;
+  const out: [number, number][] = [];
+  for (let i = 0; i < C.pillarCount; i++) {
+    const a = ((C.pillarAngleOffsetDeg + (360 / C.pillarCount) * i) * Math.PI) / 180;
+    out.push([Math.sin(a) * C.pillarRingRadius, Math.cos(a) * C.pillarRingRadius]);
+  }
+  return out;
+}
 
 /** 床の石畳の1つの環（リング） */
 export interface FloorRing {

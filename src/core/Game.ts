@@ -6,7 +6,7 @@ import { CHANGE_WARMUP, StatsOverlay } from '../debug/StatsOverlay';
 import { DevCamera } from '../debug/DevCamera';
 import { ShaderErrorMonitor } from '../render/shaderErrors';
 import { StageManager } from '../stage/StageManager';
-import { DuskColosseum, type ColosseumStage } from '../stage/stages/colosseum/ColosseumStage';
+import { DuskColosseum } from '../stage/stages/colosseum/ColosseumStage';
 
 /**
  * ゲーム全体の組み立て役。
@@ -92,18 +92,9 @@ export class Game {
     });
   }
 
-  /** 現在のステージ（A2 では Dusk Colosseum のみ） */
-  get colosseum(): ColosseumStage {
-    return this.stages.current as ColosseumStage;
-  }
-
-  /** 統計表示に出すステージの注意書き */
+  /** 統計表示に出すステージの注意書き（開発用の項目を持たないステージでは出さない） */
   private stageNotes(): string[] {
-    const c = this.colosseum;
-    const notes: string[] = [];
-    if (c.floorFallbackNote) notes.push(`床: 単色（${c.floorFallbackNote}）`);
-    if (c.environmentFallbackNote) notes.push(`環境マップ: なし（${c.environmentFallbackNote}）`);
-    return notes;
+    return this.stages.current?.dev?.notes() ?? [];
   }
 
   start(): void {

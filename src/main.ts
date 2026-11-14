@@ -33,8 +33,10 @@ async function boot(): Promise<void> {
   // 確認用カメラの視点（?view=front|oblique|top|close）
   const view = params.get('view');
   if (view && (VIEW_PRESETS as readonly string[]).includes(view)) game.devCamera.applyPreset(view as ViewPreset);
+  // 開発用の項目（持たないステージでは、ステージの調整・?scale=0 は何もしない）
+  const stageDev = game.stages.current?.dev;
   // 大きさの目安を隠す（?scale=0）
-  if (params.get('scale') === '0') game.colosseum.scaleReference.visible = false;
+  if (params.get('scale') === '0') stageDev?.controls.setScaleReferenceVisible(false);
 
   // 自動テスト・デバッグ用の参照
   const debugGlobals = window as unknown as { __game?: Game; __devPanel?: GUI };
@@ -45,14 +47,7 @@ async function boot(): Promise<void> {
     debugGlobals.__devPanel = await createDevPanel(game.quality, {
       onToggleStats: (v) => game.stats.setVisible(v),
       camera: { apply: (p) => game.devCamera.applyPreset(p) },
-      stage: {
-        getSun: () => game.colosseum.lights.sunAngles,
-        setSun: (a) => game.colosseum.lights.setSun(a),
-        setScaleReferenceVisible: (v) => {
-          game.colosseum.scaleReference.visible = v;
-        },
-        floorMode: () => (game.colosseum.floorMode === 'patterned' ? '石畳の模様（シェーダー）' : '単色（代わりの床）'),
-      },
+      stage: stageDev?.controls,
     });
   }
 }

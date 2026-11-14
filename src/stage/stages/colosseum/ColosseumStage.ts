@@ -1,11 +1,21 @@
 import { Color, Fog, Scene, Vector3, type InstancedMesh, type Mesh, type WebGLRenderTarget } from 'three';
 import type { QualityLevelSettings } from '../../../platform/QualitySettings';
 import { canRenderToHalfFloat } from '../../../render/capabilities';
-import { disposeMaterial } from '../../../render/gpuResources';
+import { releaseSceneGpuResources } from '../../../render/gpuResources';
 import { createNoiseTexture } from '../../../render/textures/noiseTexture';
 import { createScaleReference } from '../../../debug/ScaleReference';
-import type { StageContext, StageDefinition, StageGameplayData, StageInstance, StageViewData } from '../../StageDefinition';
+import type {
+  StageContext,
+  StageDefinition,
+  StageDevHooks,
+  StageGameplayData,
+  StageInstance,
+  StageViewData,
+} from '../../StageDefinition';
 import { buildArena } from './buildArena';
+import { buildPillars } from './buildPillars';
+import { Braziers, fireDetailFor } from './braziers';
+import { buildRim } from './buildRim';
 import { createFloorMaterials, FLOOR_SHADER_MARKER, type FloorMaterialSet } from './floorMaterial';
 import { BUILT_OVERVIEW, COLOSSEUM, generateFloorRings } from './layout';
 import { ArenaLights, createEnvironmentMap } from './lighting';
@@ -18,8 +28,8 @@ const HEMI_INTENSITY = 0.9;
 const HEMI_INTENSITY_WITHOUT_ENV = 1.15;
 
 /**
- * Dusk Colosseum（A2-1：床・台座・基本の照明・環境マップ・大きさの目安）。
- * 柱・外周（A2-2）、観客席・背景（A2-3）は後の工程で追加する。
+ * Dusk Colosseum（A2-1：床・台座・基本の照明・環境マップ・大きさの目安。A2-2：外周・柱）。
+ * A2-2 の CP2 でかがり火を追加。観客席・背景（A2-3）は後の工程で追加する。
  */
 export class ColosseumStage implements StageInstance {
   readonly id = 'dusk-colosseum';
@@ -29,8 +39,27 @@ export class ColosseumStage implements StageInstance {
   readonly view: StageViewData;
   readonly lights: ArenaLights;
   readonly scaleReference: InstancedMesh;
+  readonly dev: StageDevHooks = {
+    notes: () => {
+      const notes: string[] = [];
+      if (this.floorFallbackReason) notes.push(`床: 単色（${this.floorFallbackReason}）`);
+      if (this.environmentNote) notes.push(`環境マップ: なし（${this.environmentNote}）`);
+      return notes;
+    },
+    controls: {
+      getSun: () => this.lights.sunAngles,
+      setSun: (angles) => this.lights.setSun(angles),
+      setScaleReferenceVisible: (visible) => {
+        this.scaleReference.visible = visible;
+      },
+      floorMode: () => (this.floorModeValue === 'patterned' ? '石畳の模様（シェーダー）' : '単色（代わりの床）'),
+    },
+  };
 
   private readonly floor: Mesh;
+  /** 画質で影の有無を切り替えるステージの物（柱・外周の壁・かがり火の台） */
+  private readonly stageShadowCasters: Mesh[];
+  private readonly braziers = new Braziers();
   private readonly floorMaterials: FloorMaterialSet;
   private readonly noise = createNoiseTexture();
   private envTarget: WebGLRenderTarget | null = null;
@@ -53,6 +82,11 @@ export class ColosseumStage implements StageInstance {
     const arena = buildArena(this.floorMaterials.patterned);
     this.floor = arena.floor;
     scene.add(arena.floor, arena.platformSide, arena.outerGround);
+    const rim = buildRim();
+    const pillars = buildPillars();
+    scene.add(rim.wall, rim.cap, rim.terrace, pillars.stone, pillars.bands);
+    scene.add(...this.braziers.meshes);
+    this.stageShadowCasters = [rim.wall, rim.cap, pillars.stone, pillars.bands, ...this.braziers.shadowCasters];
 
     // 模様のシェーダーのコンパイルに失敗したら、単色の床に切り替える（エラーは ShaderErrorMonitor が出力済み）
     this.unregisterShaderHandler = context.shaderErrors.onFailure(FLOOR_SHADER_MARKER, () =>
@@ -85,21 +119,16 @@ export class ColosseumStage implements StageInstance {
     return this.floorModeValue;
   }
 
-  get floorFallbackNote(): string | null {
-    return this.floorFallbackReason;
-  }
-
-  /** 環境マップを使えない場合の理由（使えていれば null） */
-  get environmentFallbackNote(): string | null {
-    return this.environmentNote;
-  }
-
-  update(_dt: number): void {
-    // A2-1 では動くものはない（A2-2 のかがり火の揺らぎなどをここで更新する）
+  update(dt: number): void {
+    this.braziers.update(dt);
   }
 
   applyQuality(s: Readonly<QualityLevelSettings>): void {
     this.lights.applyQuality(s);
+    // 低画質（段階6以降）では柱・壁の影を落とさない（設計書 1-3：影はキャラクターのみ）
+    for (const m of this.stageShadowCasters) m.castShadow = s.stageShadows;
+    // かがり火の演出（高：細かい揺らぎ・光だまり／中：揺らぎを1段に／低：さらに光だまりを省く）
+    this.braziers.applyDetail(fireDetailFor(s));
     // 低画質（背景の密度を下げる段階以降）では、床の細かな質感のノイズを省く
     this.floorMaterials.setDetail(s.backgroundDensity === 'full');
   }
@@ -125,20 +154,10 @@ export class ColosseumStage implements StageInstance {
     if (this.disposed) return;
     this.disposed = true;
     this.unregisterShaderHandler();
-    this.envTarget?.dispose();
-    this.envTarget = null;
-    this.scene.environment = null;
-    this.scene.traverse((obj) => {
-      const mesh = obj as Mesh;
-      if (mesh.isMesh) {
-        mesh.geometry.dispose();
-        if (Array.isArray(mesh.material)) mesh.material.forEach(disposeMaterial);
-        else disposeMaterial(mesh.material);
-      }
-    });
-    this.floorMaterials.dispose();
-    this.noise.dispose();
-    this.lights.sun.shadow.map?.dispose();
+    // ステージが所有し、シーンの走査では見つからない資源（環境マップ・ノイズ・使っていない方の床のマテリアル）
+    this.releaseGpuResources();
+    // シーン内の資源（ジオメトリ・マテリアル・InstancedMesh・影マップ）はコンテキスト喪失時と同じ共通の処理で解放する
+    releaseSceneGpuResources(this.scene);
   }
 
   /** 環境マップを作る（作り直す場合は古いものを先に解放する） */
