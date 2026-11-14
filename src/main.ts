@@ -25,10 +25,18 @@ async function boot(): Promise<void> {
     return;
   }
 
+  const params = new URLSearchParams(location.search);
+  // ビューアー（A4）：開発サーバーのときだけ ?mode=viewer で起動する。本番ビルドでは import.meta.env.DEV が false になり、
+  // この分岐とビューアーのコードはビルドに含まれない
+  if (import.meta.env.DEV && params.get('mode') === 'viewer') {
+    const { startViewer } = await import('./viewer/ViewerApp');
+    await startViewer(container, (message) => showFatal(container, message));
+    return;
+  }
+
   const game = new Game(container, { onFatal: (message) => showFatal(container, message) });
   game.start();
 
-  const params = new URLSearchParams(location.search);
   if (params.get('stats') === '0') game.stats.setVisible(false);
   // 確認用カメラの視点（?view=front|oblique|top|close）
   const view = params.get('view');
@@ -42,7 +50,8 @@ async function boot(): Promise<void> {
   const debugGlobals = window as unknown as { __game?: Game; __devPanel?: GUI };
   debugGlobals.__game = game;
 
-  if (import.meta.env.DEV || params.get('debug') === '1') {
+  // 開発パネル・キャラクターの確認用（A4 CP1 から開発サーバー限定。本番ビルドでは ?debug=1 を付けても読み込まない）
+  if (import.meta.env.DEV) {
     // キャラクターの確認用（開発・検証専用）：?pose=extreme（極端な姿勢）、?silhouette=1（シルエット）
     if (params.get('pose') === 'extreme' || params.get('silhouette') === '1') {
       const checks = await import('./debug/characterChecks');

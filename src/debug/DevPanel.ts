@@ -13,7 +13,7 @@ import {
 
 /**
  * 開発用の設定パネル（lil-gui）。
- * 開発サーバー、または URL に ?debug=1 を付けたときだけ読み込む（通常のビルドには含めない）。
+ * 開発サーバーのときだけ読み込む（本番ビルドには含めない。?debug=1 でも開かない）。
  */
 export interface DevPanelOptions {
   onToggleStats: (visible: boolean) => void;
