@@ -23,6 +23,8 @@ export const PALETTE = {
   outerWall: '#A99780', // 外壁
   outerGround: '#5A5048',
   scaleReference: '#A9B4C2',
+  /** バナー（A2-3）：彩度・明るさを抑え、キャラクター（A3）より目立たない色 */
+  banner: { bronze: '#9A7442', crimson: '#7E3034', navy: '#36436C' },
   /** 遠景の影絵（A2-3）。地平線の色へのかすみは farView.ts で重ねる */
   farView: { hills: '#3E3448', city: '#2C2840' },
   light: {

@@ -24,6 +24,7 @@ import { ArenaLights } from './lighting';
 import { PALETTE } from './palette';
 import { createEnvironmentMap, SkyDome } from './sky';
 import { FarView } from './farView';
+import { BANNER_SHADER_MARKER, Banners } from './banners';
 
 export type FloorMode = 'patterned' | 'fallback';
 
@@ -36,7 +37,7 @@ const FOG_FAR = 900;
 
 /**
  * Dusk Colosseum（A2-1：床・台座・基本の照明・環境マップ・大きさの目安。A2-2：外周・柱）。
- * A2-2 の CP2 でかがり火を追加。A2-3：観客席・外壁（CP1）、空・遠景・霧（CP2）。バナー（CP3）は後の工程で追加する。
+ * A2-2 の CP2 でかがり火を追加。A2-3：観客席・外壁（CP1）、空・遠景・霧（CP2）、バナー（CP3）。
  */
 export class ColosseumStage implements StageInstance {
   readonly id = 'dusk-colosseum';
@@ -73,6 +74,8 @@ export class ColosseumStage implements StageInstance {
   private readonly braziers = new Braziers();
   private readonly sky = new SkyDome();
   private readonly farView = new FarView();
+  private readonly banners = new Banners();
+  private readonly unregisterBannerShaderHandler: () => void;
   private readonly floorMaterials: FloorMaterialSet;
   private readonly noise = createNoiseTexture();
   private envTarget: WebGLRenderTarget | null = null;
@@ -102,13 +105,15 @@ export class ColosseumStage implements StageInstance {
     scene.add(rim.wall, rim.cap, rim.terrace, pillars.stone, pillars.bands);
     scene.add(...this.braziers.meshes);
     // 観客席・外壁（A2-3）：影の範囲の外なので、影の切り替え（stageShadowCasters）の対象にしない
-    scene.add(buildStands(), buildOuterWall());
+    scene.add(buildStands(), buildOuterWall(), this.banners.mesh);
     this.stageShadowCasters = [rim.wall, rim.cap, pillars.stone, pillars.bands, ...this.braziers.shadowCasters];
 
     // 模様のシェーダーのコンパイルに失敗したら、単色の床に切り替える（エラーは ShaderErrorMonitor が出力済み）
     this.unregisterShaderHandler = context.shaderErrors.onFailure(FLOOR_SHADER_MARKER, () =>
       this.useFallbackFloor('シェーダーのコンパイルに失敗'),
     );
+    // バナーの揺れのシェーダーのコンパイルに失敗したら、揺れない布にする
+    this.unregisterBannerShaderHandler = context.shaderErrors.onFailure(BANNER_SHADER_MARKER, () => this.banners.disableSway());
     // 床の模様はワールド座標（最大 16m）で 3cm 程度の目地を描くため、highp 精度が必要
     if (context.renderer.capabilities.precision !== 'highp') {
       this.useFallbackFloor(`この端末のシェーダー精度（${context.renderer.capabilities.precision}）では模様を描けない`);
@@ -138,6 +143,7 @@ export class ColosseumStage implements StageInstance {
 
   update(dt: number): void {
     this.braziers.update(dt);
+    this.banners.update(dt);
   }
 
   applyQuality(s: Readonly<QualityLevelSettings>): void {
@@ -149,6 +155,8 @@ export class ColosseumStage implements StageInstance {
     // 低画質（背景の密度を下げる段階以降）では、床の細かな質感のノイズを省き、遠景を丘の1重にする
     this.floorMaterials.setDetail(s.backgroundDensity === 'full');
     this.farView.applyDensity(s.backgroundDensity === 'full');
+    // バナー：通常は18枚で揺らし、背景の密度を下げた段階では9枚で揺らさない
+    this.banners.applyDensity(s.backgroundDensity === 'full');
   }
 
   releaseGpuResources(): void {
@@ -172,6 +180,7 @@ export class ColosseumStage implements StageInstance {
     if (this.disposed) return;
     this.disposed = true;
     this.unregisterShaderHandler();
+    this.unregisterBannerShaderHandler();
     // ステージが所有し、シーンの走査では見つからない資源（環境マップ・ノイズ・使っていない方の床のマテリアル）
     this.releaseGpuResources();
     // シーン内の資源（ジオメトリ・マテリアル・InstancedMesh・影マップ）はコンテキスト喪失時と同じ共通の処理で解放する
