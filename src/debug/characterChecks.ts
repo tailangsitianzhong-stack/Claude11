@@ -8,7 +8,7 @@ import type { JointName } from '../character/skeleton';
  * - 極端な姿勢：DESIGN_DECISIONS 9-5 の5つの角度を1つの姿勢にまとめ、継ぎ目・輪郭線の破綻を確かめる
  * - シルエット：体を黒一色（光の影響なし）にして、体型A・B の形を比べる
  *
- * main.ts から開発サーバー、または ?debug=1 のときだけ使う（?pose=extreme / ?silhouette=1）。
+ * main.ts から開発サーバーのときだけ使う（?pose=extreme / ?silhouette=1）。ビューアー（A4）からも使う。
  */
 
 /** 肘・膝 140°、肩 170°、股関節 90°の蹴り上げ、胴 45°のひねり（角度は度、軸と符号は jointLimits.ts） */
