@@ -23,6 +23,8 @@ import { MATERIAL, PALETTE } from './palette';
  * かがり火（A2-2）：6基。点光源は使わず、加算合成の炎と「灯り」（足元の光だまり・炭の光）で表す。
  *
  * 描画は6基まとめて4回（InstancedMesh）：石の台・ブロンズの火皿・炎・光（炭と足元の光だまり）。
+ * 炎は1つの InstancedMesh の中に3層の板を持つ：縦の炎（外側・芯の2層。常にカメラへ向く）と、
+ * 真上から見たとき用の水平の炎（1層。見下ろし49°〜72°でなめらかに現れ、それより浅い視点では描かない）。
  * 揺らぎはシェーダーの中で時間から計算する（CPU 側の処理は毎フレーム時間の uniform を1つ進めるだけ）。
  * 炎と光は同じ揺らぎの式を使うので、炎が強いときは灯りも明るくなる。
  *
@@ -32,8 +34,8 @@ import { MATERIAL, PALETTE } from './palette';
  *   受け     0.92  〜 0.98  直径 0.48
  *   火皿     0.98  〜 1.30  口の直径 0.96（ブロンズ）
  *   炭       1.25           直径 0.84（光る円盤）
- *   炎       1.20  〜 2.20  幅 0.80（外側）／ 0.44（芯）、常にカメラの方を向く板
- *            ＋ 真上から見たとき用の水平の炎（1.50、火皿の口より上。炎の舌は直径 1.3m まで。真上に近い視点でだけ現れる）
+ *   炎（3層）縦の炎     1.20 〜 2.20  幅 0.80（外側）／ 0.44（芯、高さ 0.62）。縦軸のまわりだけ回してカメラへ向ける板
+ *            水平の炎   1.50          火皿の口より上。炎の舌は直径 1.3m まで。見下ろし49°〜72°で現れる
  *   光だまり 段差の上        直径 3.8
  */
 export const BRAZIER_PARTS = {
@@ -49,7 +51,8 @@ export const BRAZIER_PARTS = {
 
 /**
  * 画質ごとの演出（高：細かい揺らぎ（ノイズ2段）・光だまり／中：揺らぎ1段・光だまり／低：揺らぎ1段・光だまりなし）。
- * 炎の板（6基×2層の小さな板）は負荷が小さいのでどの画質でも描く。広い面積を加算で塗る足元の光だまりが最も重いので、低画質で省く。
+ * 炎（6基×3層の小さな板。水平の炎は真上に近い視点でだけ描く）は負荷が小さいのでどの画質でも描く。
+ * 広い面積を加算で塗る足元の光だまりが最も重いので、低画質で省く。
  */
 export type FireDetail = 'high' | 'medium' | 'low';
 
@@ -83,7 +86,7 @@ varying float vFlicker;
 varying float vTopFade;
 ${FLICKER_GLSL}
 void main() {
-  // 1基の中心（火皿の上）。炎の板は縦軸のまわりだけ回してカメラへ向ける
+  // 1基の中心（火皿の上）。縦の炎の板（外側・芯）は縦軸のまわりだけ回してカメラへ向ける
   vec4 center = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
   vec3 toCamFull = cameraPosition - center.xyz;
   vec3 toCam = toCamFull;
@@ -366,7 +369,7 @@ export class Braziers {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.computeBoundingSphere();
     }
-    // 炎の板はカメラの方へ回るので、包む球を幅の半分ぶん広げておく（見切れによる消え防止）
+    // 縦の炎の板はカメラの方へ回り、水平の炎は火皿の外まで広がるので、包む球を炎の幅ぶん広げておく（見切れによる消え防止）
     this.flames.boundingSphere!.radius += BRAZIER_PARTS.flame.width;
     for (const mesh of [this.stand, this.bowl]) {
       mesh.castShadow = true;
