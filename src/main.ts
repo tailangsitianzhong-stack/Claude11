@@ -33,16 +33,24 @@ async function boot(): Promise<void> {
   // 確認用カメラの視点（?view=front|oblique|top|close）
   const view = params.get('view');
   if (view && (VIEW_PRESETS as readonly string[]).includes(view)) game.devCamera.applyPreset(view as ViewPreset);
-  // 開発用の項目（持たないステージでは、ステージの調整・?scale=0 は何もしない）
+  // 開発用の項目（持たないステージでは、ステージの調整・?scale=1 は何もしない）
   const stageDev = game.stages.current?.dev;
-  // 大きさの目安を隠す（?scale=0）
-  if (params.get('scale') === '0') stageDev?.controls.setScaleReferenceVisible(false);
+  // 大きさの目安（開発・検証用。通常は表示しない）を表示する（?scale=1）
+  if (params.get('scale') === '1') stageDev?.controls.setScaleReferenceVisible(true);
 
   // 自動テスト・デバッグ用の参照
   const debugGlobals = window as unknown as { __game?: Game; __devPanel?: GUI };
   debugGlobals.__game = game;
 
   if (import.meta.env.DEV || params.get('debug') === '1') {
+    // キャラクターの確認用（開発・検証専用）：?pose=extreme（極端な姿勢）、?silhouette=1（シルエット）
+    if (params.get('pose') === 'extreme' || params.get('silhouette') === '1') {
+      const checks = await import('./debug/characterChecks');
+      for (const body of [game.player, game.dummy]) {
+        if (params.get('pose') === 'extreme') body.applyPoseDeg(checks.EXTREME_POSE);
+        if (params.get('silhouette') === '1') checks.setSilhouette(body, true);
+      }
+    }
     const { createDevPanel } = await import('./debug/DevPanel');
     debugGlobals.__devPanel = await createDevPanel(game.quality, {
       onToggleStats: (v) => game.stats.setVisible(v),

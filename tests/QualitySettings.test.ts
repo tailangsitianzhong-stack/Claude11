@@ -46,6 +46,9 @@ describe('画質の段階', () => {
       const prev = cost(l - 1);
       const cur = cost(l);
       cur.forEach((v, i) => expect(v).toBeLessThanOrEqual(prev[i]!));
+      // 例外：段階9は、意図的に追加の負荷軽減がない段階（A3 で輪郭線を段階7からオフにしたため。
+      // 新しい設定は追加しない。DESIGN_DECISIONS 9-6）
+      if (l === 9) continue;
       expect(cur.some((v, i) => v < prev[i]!)).toBe(true);
     }
   });
@@ -59,8 +62,9 @@ describe('画質の段階', () => {
     expect(settingsForLevel(6)).toMatchObject({ stageShadows: false, shadowMapSize: 512 });
     expect(settingsForLevel(7).backgroundDensity).toBe('reduced');
     expect(settingsForLevel(8)).toMatchObject({ pixelRatioCap: 1, msaaSamples: 0 });
-    expect(settingsForLevel(9).outline).toBe(false);
-    expect(settingsForLevel(8).outline).toBe(true);
+    // A3：輪郭線は段階7からオフ（段階0〜6 はオン）
+    for (let lv = 0; lv <= 6; lv++) expect(settingsForLevel(lv).outline).toBe(true);
+    for (let lv = 7; lv <= 9; lv++) expect(settingsForLevel(lv).outline).toBe(false);
   });
 
   it('プリセット 高・中・低 は段階 0・3・7', () => {

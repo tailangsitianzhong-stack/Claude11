@@ -83,7 +83,7 @@ export async function createDevPanel(quality: QualityManager, options: DevPanelO
       .add(sun, 'azimuthDeg', 0, 360, 1)
       .name('太陽の方位（°）')
       .onChange(() => st.setSun({ ...sun }));
-    const vis = { scale: true, floor: st.floorMode() };
+    const vis = { scale: st.scaleReferenceVisible(), floor: st.floorMode() };
     stageFolder
       .add(vis, 'scale')
       .name('大きさの目安（1.8m）')
