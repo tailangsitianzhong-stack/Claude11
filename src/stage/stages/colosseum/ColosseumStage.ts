@@ -64,6 +64,7 @@ export class ColosseumStage implements StageInstance {
       setScaleReferenceVisible: (visible) => {
         this.scaleReference.visible = visible;
       },
+      scaleReferenceVisible: () => this.scaleReference.visible,
       floorMode: () => (this.floorModeValue === 'patterned' ? '石畳の模様（シェーダー）' : '単色（代わりの床）'),
     },
   };
@@ -121,6 +122,8 @@ export class ColosseumStage implements StageInstance {
 
     this.lights = new ArenaLights(scene);
     this.scaleReference = createScaleReference(PALETTE.scaleReference);
+    // 大きさの目安は開発・検証用（A3）：通常の表示には出さない（?scale=1 か開発パネルで表示する）
+    this.scaleReference.visible = false;
     scene.add(this.scaleReference);
 
     this.createEnvironment();

@@ -54,6 +54,8 @@ export interface StageDevHooks {
     getSun(): StageDevSunAngles;
     setSun(angles: StageDevSunAngles): void;
     setScaleReferenceVisible(visible: boolean): void;
+    /** 大きさの目安が表示されているか（開発パネルの初期値） */
+    scaleReferenceVisible(): boolean;
     /** 床の描画方式（表示用の文） */
     floorMode(): string;
   };

@@ -9,6 +9,11 @@ import { REVISION, type Material, type WebGLProgramParametersWithUniforms } from
  *   フラグメント：    `#include <common>`、`#include <color_fragment>`（変数 `diffuseColor`）、
  *                     `#include <roughnessmap_fragment>`（変数 `roughnessFactor`）、
  *                     `#include <metalnessmap_fragment>`（変数 `metalnessFactor`）
+ *   A3（キャラクター）で追加：
+ *     MeshStandardMaterial のフラグメント：`#include <lights_fragment_end>`、変数 `normal`・`vViewPosition`・
+ *       `totalEmissiveRadiance`（リムライト。tests/characterLook.test.ts で検査）
+ *     MeshBasicMaterial の頂点シェーダー：`#include <common>`、`#include <begin_vertex>`（変数 `transformed`）、属性 `normal`
+ *       （輪郭線の膨らみ）
  *   GLSL 3.00 ES（WebGL2）。`varying` は three.js が in/out に置き換える。`fwidth` は標準で使える。
  *
  * ■ 安全策

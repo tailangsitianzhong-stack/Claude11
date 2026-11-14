@@ -56,9 +56,10 @@ export const QUALITY_STEPS: readonly QualityStep[] = [
     label: '柱の影オフ（キャラクターのみ・512）',
     apply: (s) => void ((s.stageShadows = false), (s.shadowMapSize = 512), (s.shadowRadius = 1)),
   },
-  { label: '背景の密度を下げる', apply: (s) => void (s.backgroundDensity = 'reduced') },
+  // A3：輪郭線は段階7（低）からオフ（DESIGN_DECISIONS 9-3）。段階9は意図的に追加の負荷軽減がない段階として残す（9-6）
+  { label: '背景の密度を下げる・輪郭線オフ', apply: (s) => void ((s.backgroundDensity = 'reduced'), (s.outline = false)) },
   { label: '描画倍率 1.0・MSAA オフ', apply: (s) => void ((s.pixelRatioCap = 1.0), (s.msaaSamples = 0)) },
-  { label: '輪郭線オフ', apply: (s) => void (s.outline = false) },
+  { label: '追加の負荷軽減なし（輪郭線は段階7でオフ済み）', apply: (s) => void (s.outline = false) },
 ];
 
 /** 最も低い画質の段階（= 9） */
